@@ -19,8 +19,9 @@ use std::time::{Duration, Instant};
 
 use axum::{
     extract::State,
-    http::StatusCode,
-    response::Json,
+    http::{HeaderValue, StatusCode},
+    middleware::{self, Next},
+    response::{Json, Response},
     routing::{get, post},
     Router,
 };
@@ -42,6 +43,9 @@ pub struct AttestState {
     read_limiter: Mutex<RateLimiter>,
     /// Runtime integrity status (TOCTOU defense).
     pub integrity: Option<SharedIntegrity>,
+    /// Cached EAT token (base64) for HTTP-A header.
+    /// Updated whenever the quote is refreshed.
+    pub eat_token_b64: RwLock<Option<String>>,
 }
 
 impl AttestState {
@@ -57,6 +61,7 @@ impl AttestState {
             // GET endpoints: max 60 requests per 60 seconds
             read_limiter: Mutex::new(RateLimiter::new(60, Duration::from_secs(60))),
             integrity: None,
+            eat_token_b64: RwLock::new(None),
         }
     }
 
@@ -64,6 +69,12 @@ impl AttestState {
     pub fn with_integrity(mut self, integrity: SharedIntegrity) -> Self {
         self.integrity = Some(integrity);
         self
+    }
+
+    /// Update the cached EAT token (call after quote refresh).
+    pub async fn set_eat_token(&self, b64: String) {
+        let mut guard = self.eat_token_b64.write().await;
+        *guard = Some(b64);
     }
 }
 
@@ -74,7 +85,33 @@ pub fn attestation_router(state: Arc<AttestState>) -> Router {
         .route("/attest/value-x", get(get_value_x))
         .route("/attest/integrity", get(get_integrity))
         .route("/health", get(health))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            http_a_middleware,
+        ))
         .with_state(state)
+}
+
+/// HTTP-A middleware: attach `Attestation-Token` header to every response.
+/// Clients that understand it get per-request attestation proof.
+/// Clients that don't simply ignore the header.
+async fn http_a_middleware(
+    State(state): State<Arc<AttestState>>,
+    request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let mut response = next.run(request).await;
+
+    // Attach the EAT token if available
+    if let Some(ref b64) = *state.eat_token_b64.read().await {
+        if let Ok(val) = HeaderValue::from_str(b64) {
+            response
+                .headers_mut()
+                .insert("Attestation-Token", val);
+        }
+    }
+
+    response
 }
 
 #[derive(Serialize)]

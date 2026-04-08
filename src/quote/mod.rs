@@ -196,6 +196,52 @@ impl UnifiedQuote {
     }
 }
 
+impl UnifiedQuote {
+    /// Convert to an EAT token (COSE_Sign1 over CBOR).
+    /// This is the canonical binary format for wire transport.
+    pub fn to_eat(&self, signing_key: &SigningKey) -> eat::EatToken {
+        let claims = eat::EatClaims {
+            value_x: self.value_x,
+            platform: self.platform,
+            pubkey: self.pubkey,
+            quote_hash: self.platform_quote_hash,
+            platform_quote: self.platform_quote.clone(),
+            tcb_version: self.tcb_version.clone(),
+            collateral_hash: None,
+            build_hash: self.build_attestation_hash,
+            source_commit: None,
+            registry_entry: None,
+            iat: self.timestamp,
+            nonce: self.nonce,
+            heartbeat_seq: self.heartbeat_seq,
+            integrity_ok: self.integrity_ok,
+        };
+        eat::EatToken::sign(claims, signing_key)
+    }
+
+    /// Create a UnifiedQuote from an EAT token's claims.
+    /// Used when receiving an EAT token and needing JSON compat.
+    pub fn from_eat(claims: &eat::EatClaims) -> Self {
+        Self {
+            version: 2,
+            platform: claims.platform,
+            value_x: claims.value_x,
+            platform_quote: claims.platform_quote.clone(),
+            platform_quote_hash: claims.quote_hash,
+            build_attestation_hash: claims.build_hash,
+            tcb_version: claims.tcb_version.clone(),
+            integrity_ok: claims.integrity_ok,
+            heartbeat_seq: claims.heartbeat_seq,
+            timestamp: claims.iat,
+            nonce: claims.nonce,
+            // Signature/pubkey from the EAT are COSE-level, not field-level.
+            // For JSON compat, zero these — use EAT verification instead.
+            signature: [0u8; 64],
+            pubkey: claims.pubkey,
+        }
+    }
+}
+
 fn default_true() -> bool {
     true
 }
