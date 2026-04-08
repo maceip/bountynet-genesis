@@ -15,6 +15,7 @@
 //! - The ed25519 signature ties everything together
 
 mod attest;
+mod compat;
 mod integrity;
 mod quote;
 mod registry;
