@@ -15,7 +15,9 @@
 //! - The ed25519 signature ties everything together
 
 mod attest;
+mod integrity;
 mod quote;
+mod registry;
 mod tee;
 
 use std::path::PathBuf;

@@ -27,6 +27,7 @@ use axum::{
 use serde::Serialize;
 use tokio::sync::{Mutex, RwLock};
 
+use crate::integrity::SharedIntegrity;
 use crate::quote::UnifiedQuote;
 
 /// Shared state for the attestation endpoint.
@@ -39,6 +40,8 @@ pub struct AttestState {
     full_quote_limiter: Mutex<RateLimiter>,
     /// Rate limiter for read endpoints.
     read_limiter: Mutex<RateLimiter>,
+    /// Runtime integrity status (TOCTOU defense).
+    pub integrity: Option<SharedIntegrity>,
 }
 
 impl AttestState {
@@ -53,7 +56,14 @@ impl AttestState {
             full_quote_limiter: Mutex::new(RateLimiter::new(5, Duration::from_secs(60))),
             // GET endpoints: max 60 requests per 60 seconds
             read_limiter: Mutex::new(RateLimiter::new(60, Duration::from_secs(60))),
+            integrity: None,
         }
+    }
+
+    /// Set the integrity monitor handle.
+    pub fn with_integrity(mut self, integrity: SharedIntegrity) -> Self {
+        self.integrity = Some(integrity);
+        self
     }
 }
 
@@ -62,6 +72,7 @@ pub fn attestation_router(state: Arc<AttestState>) -> Router {
         .route("/attest", get(get_compact_quote))
         .route("/attest/full", post(get_full_quote))
         .route("/attest/value-x", get(get_value_x))
+        .route("/attest/integrity", get(get_integrity))
         .route("/health", get(health))
         .with_state(state)
 }
@@ -159,6 +170,38 @@ async fn get_value_x(
                 error: "no attestation available".into(),
             }),
         )),
+    }
+}
+
+async fn get_integrity(
+    State(state): State<Arc<AttestState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    if !state.read_limiter.lock().await.allow() {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ErrorResponse {
+                error: "rate limited".into(),
+            }),
+        ));
+    }
+
+    match &state.integrity {
+        Some(integrity) => {
+            let guard: tokio::sync::RwLockReadGuard<'_, crate::integrity::IntegrityStatus> = integrity.read().await;
+            Ok(Json(serde_json::json!({
+                "integrity_ok": guard.integrity_ok,
+                "boot_value_x": hex::encode(guard.boot_value_x),
+                "current_value_x": hex::encode(guard.current_value_x),
+                "check_count": guard.check_count,
+                "last_check": guard.last_check,
+                "rtmr_extended": guard.rtmr_extended,
+            })))
+        }
+        None => Ok(Json(serde_json::json!({
+            "integrity_ok": true,
+            "monitoring": false,
+            "note": "integrity monitor not started"
+        }))),
     }
 }
 

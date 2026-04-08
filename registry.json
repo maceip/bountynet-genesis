@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "value_x": "cc28a4bc48236891b90852a24e228b095299b8d08e0813b07b27072683fba7a757143c4092c92eab9797a693e60ee3f6",
+      "git_commit": "0af0c6f",
+      "runner_version": "2.323.0",
+      "build_attestation_hash": null,
+      "image_digest": "sha256:38278557d710d0c83a843fb9bef65c4ebe855c5e5a9ee42d6ab53c28ff3a7915",
+      "registered_at": "2026-04-08T13:43:00Z",
+      "recommended": true,
+      "deprecated": false,
+      "notes": "Initial release — GCP TDX c3-standard-4, runner v2.323.0"
+    }
+  ]
+}

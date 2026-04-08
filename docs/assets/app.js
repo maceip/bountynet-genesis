@@ -273,20 +273,20 @@ async function setStep(id, status, detail) {
 
 // ===== 3) On-Chain =====
 
-// Minimal TeeGated ABI for interaction
-const TEE_GATED_ABI = [
-    "function registered_value_x_high() view returns (bytes32)",
-    "function registered_value_x_low() view returns (bytes16)",
-    "function registered_platform() view returns (uint8)",
-    "function registered_tee_address() view returns (address)",
-    "function is_initialized() view returns (bool)",
-    "function verify_value_x(bytes32 high, bytes16 low) view returns (bool)",
-    "function action_count() view returns (uint256)",
-    "event TeeRegistered(bytes32 value_x_high, bytes16 value_x_low, uint8 platform, address tee_address, uint256 timestamp)",
+// AttestRegistry contract (compiled from contracts/AttestRegistry.vy)
+const ATTEST_REGISTRY_ABI = [
+    "function register(bytes32 value_x_high, bytes16 value_x_low, uint8 platform, bytes32 quote_hash, bytes32 pubkey)",
+    "function verify(bytes32 value_x_high, bytes16 value_x_low, bytes32 pubkey) view returns (bool)",
+    "function attestation_count() view returns (uint256)",
+    "function latest_key() view returns (bytes32)",
+    "function get_attestation(bytes32 key) view returns (bytes32, bytes16, uint8, bytes32, bytes32, uint256, address)",
+    "event AttestationRegistered(address indexed registrant, bytes32 value_x_high, bytes16 value_x_low, uint8 platform, bytes32 quote_hash, bytes32 pubkey, uint256 timestamp)",
 ];
 
-// Will be set after deployment
-let CONTRACT_ADDRESS = null;
+const ATTEST_REGISTRY_BYTECODE = "0x6102b9610011610000396102b9610000f35f3560e01c60026007820660011b6102ab01601e395f51565b63838e595b81186102a35760a4361034176102a7576024358060801b6102a7576040526044358060081c6102a7576060525f6004358160c001526020810190506040518160c001526010810190506084358160c001526020810190508060a05260a090508051602082012090506080525f6080516020525f5260405f206004358155604051600182015560605160028201556064356003820155608435600482015542600582015533600682015550600154600181018181106102a7579050600155608051600255337f08a7ca0b0686fcdcd2d1826f1b0ba71bf2f13eafa004a15750dece9547c56b2360043560a0526040604060c05e6040606461010037426101405260c060a0a2005b638ad7bf4181186101a4576064361034176102a7576024358060801b6102a7576040525f6004358160a001526020810190506040518160a001526010810190506044358160a0015260208101905080608052608090508051602082012090506060525f6060516020525f5260405f2060058101905054151560805260206080f35b63e9f391b681186102a3576024361034176102a7575f6004356020525f5260405f20805460405260018101546060526002810154608052600381015460a052600481015460c052600581015460e0526006810154610100525060e060406101205e60e0610120f35b63940992a381186102a3576024361034176102a7575f6004356020525f5260405f20805460405260018101546060526002810154608052600381015460a052600481015460c052600581015460e0526006810154610100525060e06040f35b63c84fb26f81186102a357346102a75760015460405260206040f35b632587fd7d81186102a357346102a75760025460405260206040f35b5f5ffd5b5f80fd02a300180287020c0123026b02a38558200512b8cf71185a3a307340385c4345fdb44349ae270c7ddb02f9db4619dccb551902b9810e00a1657679706572830004030036";
+
+// Will be set after deployment (or loaded from localStorage)
+let CONTRACT_ADDRESS = localStorage.getItem('bountynet_contract') || null;
 let provider = null;
 let signer = null;
 
@@ -340,24 +340,6 @@ document.getElementById('btn-register').addEventListener('click', async () => {
         const quote = await res.json();
 
         logOnchain('info', `Got quote: platform=${quote.platform}, value_x=${quote.value_x.slice(0, 16)}...`);
-        logOnchain('info', 'Preparing on-chain registration transaction...');
-
-        // For demo: deploy a minimal storage contract that records the attestation
-        // In production this would interact with the deployed TeeGated.vy contract
-        const factory = new ethers.ContractFactory(
-            [
-                "constructor(bytes32 valueXHigh, bytes16 valueXLow, uint8 platform, bytes32 quoteHash, bytes32 pubkey)",
-                "function valueXHigh() view returns (bytes32)",
-                "function valueXLow() view returns (bytes16)",
-                "function platform() view returns (uint8)",
-                "function quoteHash() view returns (bytes32)",
-                "function pubkey() view returns (bytes32)",
-                "function verifyValueX(bytes32 high, bytes16 low) view returns (bool)",
-            ],
-            // Minimal bytecode that stores 5 values and has a verify function
-            "0x60806040523461008957604051610439380380610439833981016080818303126100895780519160208101519160408201519260608301519360808401519460a001516004811061008957600080556001556002805460ff191660ff9290921691909117905560035560045561034a908161008f823961016e565b5f80fd5b610177610340565b9291505056fe6080604052348015600e575f80fd5b506004361060685760003560e01c80630754617214606c578063254800d514608b57806342b4532614609f578063a87d942c1460b3578063c2bc2efc1460c7578063ca20126d1460db575b5f80fd5b5f5460405190815260200160405180910390f35b60015460405190815260200160405180910390f35b60025460405160ff909116815260200160405180910390f35b60035460405190815260200160405180910390f35b60045460405190815260200160405180910390f35b60eb60043560243560f1565b60405190151581526020016040518091039056fea164736f6c634300081b000a",
-            signer
-        );
 
         // Split value_x (96 hex chars = 48 bytes) into high (32 bytes) and low (16 bytes)
         const vxHigh = '0x' + quote.value_x.slice(0, 64);
@@ -366,24 +348,37 @@ document.getElementById('btn-register').addEventListener('click', async () => {
         const quoteHash = '0x' + quote.platform_quote_hash;
         const pubkey = '0x' + quote.pubkey;
 
-        logOnchain('info', 'Sending transaction... (confirm in wallet)');
+        // Deploy contract if we don't have one yet
+        if (!CONTRACT_ADDRESS) {
+            logOnchain('info', 'Deploying AttestRegistry contract to Sepolia...');
+            const factory = new ethers.ContractFactory(ATTEST_REGISTRY_ABI, ATTEST_REGISTRY_BYTECODE, signer);
+            const contract = await factory.deploy();
+            logOnchain('info', `Deploy TX: ${contract.deploymentTransaction().hash}`);
+            logOnchain('info', 'Waiting for deployment confirmation...');
+            await contract.waitForDeployment();
+            CONTRACT_ADDRESS = await contract.getAddress();
+            localStorage.setItem('bountynet_contract', CONTRACT_ADDRESS);
+            logOnchain('success', `Contract deployed at: ${CONTRACT_ADDRESS}`);
+            logOnchain('info', `Explorer: https://sepolia.etherscan.io/address/${CONTRACT_ADDRESS}`);
+        }
 
-        // Just store the attestation data in a simple contract
-        const tx = await signer.sendTransaction({
-            data: ethers.AbiCoder.defaultAbiCoder().encode(
-                ['bytes32', 'bytes16', 'uint8', 'bytes32', 'bytes32', 'uint256'],
-                [vxHigh, vxLow, platformNum, quoteHash, pubkey, quote.timestamp]
-            ),
-            value: 0,
-        });
+        // Register the attestation
+        logOnchain('info', 'Registering attestation on-chain... (confirm in wallet)');
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, ATTEST_REGISTRY_ABI, signer);
+        const tx = await contract.register(vxHigh, vxLow, platformNum, quoteHash, pubkey);
 
         logOnchain('info', `TX submitted: ${tx.hash}`);
         logOnchain('info', 'Waiting for confirmation...');
 
         const receipt = await tx.wait();
         logOnchain('success', `Confirmed in block ${receipt.blockNumber}`);
-        logOnchain('success', `TEE identity registered on Sepolia!`);
-        logOnchain('info', `Explorer: https://sepolia.etherscan.io/tx/${tx.hash}`);
+        logOnchain('success', `TEE attestation registered on Sepolia!`);
+        logOnchain('info', `Contract: https://sepolia.etherscan.io/address/${CONTRACT_ADDRESS}`);
+        logOnchain('info', `TX: https://sepolia.etherscan.io/tx/${tx.hash}`);
+
+        // Read back the count
+        const count = await contract.attestation_count();
+        logOnchain('info', `Total attestations registered: ${count}`);
 
     } catch (e) {
         logOnchain('error', `Registration failed: ${e.message}`);
@@ -392,17 +387,31 @@ document.getElementById('btn-register').addEventListener('click', async () => {
 
 document.getElementById('btn-onchain-verify').addEventListener('click', async () => {
     if (!signer) return logOnchain('error', 'Connect wallet first');
+    if (!CONTRACT_ADDRESS) return logOnchain('error', 'No contract deployed yet. Register first.');
 
     try {
         logOnchain('info', 'Fetching current attestation from runner...');
         const res = await fetch(`${RUNNER_URL}/attest`);
         const quote = await res.json();
 
-        logOnchain('info', `Current Value X: ${quote.value_x.slice(0, 24)}...`);
-        logOnchain('info', `Platform: ${quote.platform}`);
-        logOnchain('info', `Pubkey: ${quote.pubkey.slice(0, 24)}...`);
-        logOnchain('success', 'Quote fetched. Compare against on-chain registration above.');
-        logOnchain('info', 'In production, the smart contract would verify the match on-chain.');
+        const vxHigh = '0x' + quote.value_x.slice(0, 64);
+        const vxLow = '0x' + quote.value_x.slice(64, 96);
+        const pubkey = '0x' + quote.pubkey;
+
+        logOnchain('info', `Checking on-chain: Value X=${quote.value_x.slice(0, 16)}... pubkey=${quote.pubkey.slice(0, 16)}...`);
+
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, ATTEST_REGISTRY_ABI, signer);
+        const isRegistered = await contract.verify(vxHigh, vxLow, pubkey);
+
+        if (isRegistered) {
+            logOnchain('success', 'ON-CHAIN VERIFICATION PASSED');
+            logOnchain('success', 'The runner attestation matches the registered on-chain identity.');
+            const count = await contract.attestation_count();
+            logOnchain('info', `Registry has ${count} total attestations.`);
+        } else {
+            logOnchain('error', 'ON-CHAIN VERIFICATION FAILED');
+            logOnchain('error', 'This Value X + pubkey combination is NOT registered on-chain.');
+        }
 
     } catch (e) {
         logOnchain('error', `Verification failed: ${e.message}`);

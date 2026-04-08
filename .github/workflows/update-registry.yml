@@ -1,0 +1,67 @@
+name: Update Value X Registry
+
+on:
+  workflow_run:
+    workflows: ["Build & Attest Runner Image"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  update-registry:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get image digest from build
+        id: digest
+        run: |
+          # Get the digest from the latest GHCR image
+          DIGEST=$(gh api \
+            /orgs/$(echo $GITHUB_REPOSITORY | cut -d/ -f1)/packages/container/$(echo $GITHUB_REPOSITORY | cut -d/ -f2)/versions \
+            --jq '.[0].name' 2>/dev/null || echo "unknown")
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+          echo "Image digest: ${DIGEST}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute Value X
+        id: valuex
+        run: |
+          # Build the shim and runner in a temp container to compute Value X
+          # For now, use the Value X from the running instance if available
+          # This will be automated once we have a stable compute pipeline
+          echo "value_x=pending-compute" >> $GITHUB_OUTPUT
+
+      - name: Update registry
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # Add entry to registry using jq
+          jq --arg vx "${{ steps.valuex.outputs.value_x }}" \
+             --arg commit "$COMMIT" \
+             --arg ts "$TIMESTAMP" \
+             --arg digest "${{ steps.digest.outputs.digest }}" \
+             '.entries += [{
+               "value_x": $vx,
+               "git_commit": $commit,
+               "runner_version": "2.323.0",
+               "build_attestation_hash": null,
+               "image_digest": $digest,
+               "registered_at": $ts,
+               "recommended": true,
+               "deprecated": false,
+               "notes": "Auto-registered from CI build"
+             }]' registry.json > registry.json.tmp && mv registry.json.tmp registry.json
+
+      - name: Commit registry update
+        run: |
+          git config user.name "bountynet-bot"
+          git config user.email "bot@bountynet.dev"
+          git add registry.json
+          git diff --cached --quiet || git commit -m "registry: update Value X for $(git rev-parse --short HEAD)"
+          git push

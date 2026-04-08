@@ -51,6 +51,31 @@ pub struct UnifiedQuote {
     #[serde_as(as = "Hex")]
     pub platform_quote_hash: [u8; 32],
 
+    // --- LATTE Layer 3: Build provenance (Attestable Builds) ---
+    /// sha256 of the build attestation (e.g., Sigstore bundle from GitHub Actions).
+    /// Links this runtime quote to the CI pipeline that built the image.
+    /// None if build provenance is not available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde_as(as = "Option<Hex>")]
+    pub build_attestation_hash: Option<[u8; 32]>,
+
+    // --- TCB (Trusted Computing Base) status ---
+    /// Platform TCB version string for key rotation tracking.
+    /// Format varies: TDX="TEE_TCB_SVN hex", SNP="reported_tcb hex", Nitro=None.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tcb_version: Option<String>,
+
+    // --- Runtime integrity ---
+    /// Whether the runtime integrity monitor confirms Value X unchanged since boot.
+    /// false means disk contents changed after attestation — treat with suspicion.
+    #[serde(default = "default_true")]
+    pub integrity_ok: bool,
+
+    /// Heartbeat sequence number. Monotonically increasing. Gaps indicate
+    /// the TEE stopped producing quotes for a period.
+    #[serde(default)]
+    pub heartbeat_seq: u64,
+
     // --- Binding ---
     pub timestamp: u64,
     #[serde_as(as = "Hex")]
@@ -78,12 +103,22 @@ impl UnifiedQuote {
         nonce: [u8; 32],
         signing_key: &SigningKey,
     ) -> Self {
-        let platform_quote_hash = {
-            let mut h = Sha256::new();
-            h.update(&platform_quote);
-            let result: [u8; 32] = h.finalize().into();
-            result
-        };
+        Self::new_with_metadata(platform, value_x, platform_quote, nonce, signing_key, None, None, true, 0)
+    }
+
+    /// Construct a UnifiedQuote with full metadata (build provenance, TCB, integrity).
+    pub fn new_with_metadata(
+        platform: Platform,
+        value_x: [u8; 48],
+        platform_quote: Vec<u8>,
+        nonce: [u8; 32],
+        signing_key: &SigningKey,
+        build_attestation_hash: Option<[u8; 32]>,
+        tcb_version: Option<String>,
+        integrity_ok: bool,
+        heartbeat_seq: u64,
+    ) -> Self {
+        let platform_quote_hash: [u8; 32] = Sha256::digest(&platform_quote).into();
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -107,6 +142,10 @@ impl UnifiedQuote {
             value_x,
             platform_quote: Some(platform_quote),
             platform_quote_hash,
+            build_attestation_hash,
+            tcb_version,
+            integrity_ok,
+            heartbeat_seq,
             timestamp,
             nonce,
             signature: signature.to_bytes(),
@@ -115,6 +154,7 @@ impl UnifiedQuote {
     }
 
     /// The on-chain compact form: strip the raw platform quote.
+    /// Retains all metadata fields (build provenance, TCB, integrity).
     pub fn compact(&self) -> Self {
         let mut c = self.clone();
         c.platform_quote = None;
@@ -153,6 +193,10 @@ impl UnifiedQuote {
         msg.extend_from_slice(nonce);
         msg
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// On-chain representation — just the fields an oracle stores.
