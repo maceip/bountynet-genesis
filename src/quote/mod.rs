@@ -7,6 +7,7 @@
 //! - On-chain footprint: ~180 bytes (no raw quote, just hash)
 //! - Off-chain: full quote available for deep verification
 
+pub mod eat;
 pub mod value_x;
 pub mod verify;
 

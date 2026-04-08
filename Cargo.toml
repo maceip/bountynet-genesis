@@ -6,9 +6,9 @@ description = "Attestation shim for GitHub Actions runners in TEEs"
 
 [features]
 default = ["nitro", "sev-snp", "tdx"]
-nitro = ["dep:ciborium", "dep:coset", "dep:serde_cbor"]
+nitro = ["dep:serde_cbor"]
 sev-snp = ["dep:p384"]
-tdx = ["dep:p256", "dep:base64"]
+tdx = ["dep:p256"]
 # Future: sgx (backport from tdx)
 
 [dependencies]
@@ -28,9 +28,11 @@ axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["limit"] }
 
-# Nitro (COSE/CBOR for attestation doc parsing)
-ciborium = { version = "0.2", optional = true }
-coset = { version = "0.3", optional = true }
+# CBOR/COSE — core dependency for EAT token format
+ciborium = "0.2"
+coset = "0.3"
+
+# Nitro attestation doc parsing (uses serde_cbor for COSE_Sign1 payload)
 serde_cbor = { version = "0.11", optional = true }
 
 # Crypto verification (ECDSA for platform quote signatures)
@@ -41,8 +43,8 @@ x509-cert = { version = "0.2", features = ["std"] }
 der = { version = "0.7", features = ["std"] }
 spki = "0.7"
 
-# PEM parsing for TDX cert chains
-base64 = { version = "0.22", optional = true }
+# Base64 for EAT HTTP-A transport + TDX PEM parsing
+base64 = "0.22"
 
 # For TEE device ioctls
 nix = { version = "0.29", features = ["ioctl"] }
