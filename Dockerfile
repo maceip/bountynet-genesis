@@ -8,7 +8,7 @@
 # ===========================================================================
 
 # --- Stage 1: Build the Rust shim ---
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.94-bookworm AS builder
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
