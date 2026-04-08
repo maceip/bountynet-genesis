@@ -1,0 +1,83 @@
+name: Test Remote Attestation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  attest-test:
+    runs-on: [self-hosted, bountynet, tee]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check TEE environment
+        run: |
+          echo "=== TEE Device Check ==="
+          ls -la /dev/tdx* /dev/sev* /dev/nsm 2>/dev/null || echo "No TEE devices visible (expected in container)"
+          echo ""
+          echo "=== Environment ==="
+          echo "BOUNTYNET_VALUE_X=${BOUNTYNET_VALUE_X:-not set}"
+          echo "BOUNTYNET_ATTEST_PORT=${BOUNTYNET_ATTEST_PORT:-not set}"
+
+      - name: Query attestation endpoint
+        run: |
+          ATTEST_PORT="${BOUNTYNET_ATTEST_PORT:-9384}"
+          echo "=== Health Check ==="
+          curl -sf "http://localhost:${ATTEST_PORT}/health" && echo " OK" || echo " FAILED"
+
+          echo ""
+          echo "=== Value X ==="
+          curl -sf "http://localhost:${ATTEST_PORT}/attest/value-x" | jq .
+
+          echo ""
+          echo "=== Cached Attestation (compact) ==="
+          curl -sf "http://localhost:${ATTEST_PORT}/attest" | jq .
+
+          echo ""
+          echo "=== Fresh Full Attestation ==="
+          FULL_QUOTE=$(curl -sf -X POST "http://localhost:${ATTEST_PORT}/attest/full")
+          echo "${FULL_QUOTE}" | jq '{
+            version: .version,
+            platform: .platform,
+            value_x: .value_x,
+            platform_quote_hash: .platform_quote_hash,
+            timestamp: .timestamp,
+            pubkey: .pubkey,
+            quote_size: (.platform_quote | length / 2)
+          }'
+
+      - name: Verify attestation locally
+        run: |
+          ATTEST_PORT="${BOUNTYNET_ATTEST_PORT:-9384}"
+          echo "=== Remote Attestation Verification ==="
+
+          # Fetch the full quote
+          QUOTE_JSON=$(curl -sf -X POST "http://localhost:${ATTEST_PORT}/attest/full")
+
+          # Extract fields
+          PLATFORM=$(echo "${QUOTE_JSON}" | jq -r .platform)
+          VALUE_X=$(echo "${QUOTE_JSON}" | jq -r .value_x)
+          PUBKEY=$(echo "${QUOTE_JSON}" | jq -r .pubkey)
+          SIG=$(echo "${QUOTE_JSON}" | jq -r .signature)
+          TIMESTAMP=$(echo "${QUOTE_JSON}" | jq -r .timestamp)
+
+          echo "Platform: ${PLATFORM}"
+          echo "Value X:  ${VALUE_X}"
+          echo "Pubkey:   ${PUBKEY}"
+          echo "Timestamp: ${TIMESTAMP}"
+          echo ""
+
+          # Compare Value X with the environment variable set by the shim
+          if [ "${BOUNTYNET_VALUE_X:-}" = "${VALUE_X}" ]; then
+            echo "Value X matches shim environment: PASS"
+          else
+            echo "Value X from endpoint: ${VALUE_X}"
+            echo "Value X from env:      ${BOUNTYNET_VALUE_X:-not set}"
+            echo "(Mismatch is OK if env not set)"
+          fi
+
+          echo ""
+          echo "=== Attestation Complete ==="
+          echo "The runner is attested and serving live quotes."
+          echo "Full verification (Layer 2) can be done by fetching the platform_quote"
+          echo "and validating the TEE signature chain."

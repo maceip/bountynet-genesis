@@ -1,0 +1,178 @@
+//! bountynet-shim: Attestation wrapper for GitHub Actions self-hosted runners.
+//!
+//! This binary:
+//! 1. Detects which TEE it's running in (Nitro / SEV-SNP / TDX)
+//! 2. Computes Value X (deterministic hash of the runner image — LATTE Layer 1)
+//! 3. Generates a TEE-derived signing key
+//! 4. Binds Value X + signing key into the TEE attestation report
+//! 5. Produces a UnifiedQuote (the "one ring" format)
+//! 6. Starts the GitHub Actions runner as a subprocess
+//! 7. Serves a /attest endpoint for remote verification
+//!
+//! The UnifiedQuote can be submitted to an on-chain oracle so that:
+//! - Anyone can verify the runner's identity (Value X) across platforms
+//! - The platform quote proves the runner is inside a genuine TEE
+//! - The ed25519 signature ties everything together
+
+mod attest;
+mod quote;
+mod tee;
+
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::Arc;
+
+use ed25519_dalek::SigningKey;
+use rand::rngs::OsRng;
+use sha2::{Digest, Sha256};
+
+use quote::{UnifiedQuote, value_x};
+use tee::detect::detect_tee;
+
+/// Default port for the attestation endpoint.
+const ATTEST_PORT: u16 = 9384;
+
+/// Default path to the GitHub Actions runner.
+const DEFAULT_RUNNER_DIR: &str = "/opt/actions-runner";
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let runner_dir = std::env::var("RUNNER_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(DEFAULT_RUNNER_DIR));
+
+    let attest_port: u16 = std::env::var("ATTEST_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(ATTEST_PORT);
+
+    // --- Step 1: Detect TEE platform ---
+    eprintln!("[bountynet] Detecting TEE platform...");
+    let tee_provider = match detect_tee() {
+        Ok(p) => {
+            eprintln!("[bountynet] Detected: {:?}", p.platform());
+            Some(p)
+        }
+        Err(e) => {
+            eprintln!("[bountynet] WARNING: No TEE detected ({e}). Running in insecure mode.");
+            eprintln!("[bountynet] Attestation will be unavailable.");
+            None
+        }
+    };
+
+    // --- Step 2: Compute Value X ---
+    eprintln!("[bountynet] Computing Value X from {}...", runner_dir.display());
+    let value_x_hash = value_x::compute_value_x(&runner_dir)?;
+    eprintln!("[bountynet] Value X = {}", hex::encode(value_x_hash));
+
+    // --- Step 3: Generate TEE-derived signing key ---
+    // In production, this key should be derived deterministically from
+    // TEE sealing key + value_x, so the same runner always produces
+    // the same pubkey. For the prototype, we generate a fresh key.
+    let signing_key = SigningKey::generate(&mut OsRng);
+    let pubkey_bytes = signing_key.verifying_key().to_bytes();
+    eprintln!(
+        "[bountynet] TEE signing pubkey = {}",
+        hex::encode(pubkey_bytes)
+    );
+
+    // --- Step 4: Bind value_x + pubkey into TEE report_data ---
+    // report_data layout (64 bytes):
+    //   [0..32]  = sha256(ed25519_pubkey)
+    //   [32..48] = value_x[0..16] (truncated prefix for binding)
+    //   [48..64] = zeros (reserved)
+    let mut report_data = [0u8; 64];
+    let pubkey_hash: [u8; 32] = Sha256::digest(pubkey_bytes).into();
+    report_data[..32].copy_from_slice(&pubkey_hash);
+    report_data[32..48].copy_from_slice(&value_x_hash[..16]);
+
+    // --- Step 5: Collect TEE evidence and build UnifiedQuote ---
+    let initial_quote = if let Some(ref provider) = tee_provider {
+        match provider.collect_evidence(&report_data) {
+            Ok(evidence) => {
+                let nonce: [u8; 32] = rand::random();
+                let uq = UnifiedQuote::new(
+                    evidence.platform,
+                    value_x_hash,
+                    evidence.raw_quote,
+                    nonce,
+                    &signing_key,
+                );
+                eprintln!("[bountynet] UnifiedQuote generated.");
+                Some(uq)
+            }
+            Err(e) => {
+                eprintln!("[bountynet] WARNING: Failed to collect TEE evidence: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // --- Step 6: Start attestation endpoint ---
+    let signing_key_clone = signing_key.clone();
+    let value_x_clone = value_x_hash;
+    let tee_provider_for_refresh: Option<Arc<dyn tee::TeeProvider>> =
+        tee_provider.map(|p| Arc::from(p));
+    let tee_provider_ref = tee_provider_for_refresh.clone();
+
+    let attest_state = Arc::new(attest::AttestState::new(
+        initial_quote,
+        Box::new(move || {
+            let provider = tee_provider_ref
+                .as_ref()
+                .ok_or_else(|| "no TEE available".to_string())?;
+
+            let mut rd = [0u8; 64];
+            let pkh: [u8; 32] = Sha256::digest(signing_key_clone.verifying_key().to_bytes()).into();
+            rd[..32].copy_from_slice(&pkh);
+            rd[32..48].copy_from_slice(&value_x_clone[..16]);
+
+            let evidence = provider
+                .collect_evidence(&rd)
+                .map_err(|e| e.to_string())?;
+
+            let nonce: [u8; 32] = rand::random();
+            Ok(UnifiedQuote::new(
+                evidence.platform,
+                value_x_clone,
+                evidence.raw_quote,
+                nonce,
+                &signing_key_clone,
+            ))
+        }),
+    ));
+
+    let app = attest::attestation_router(attest_state);
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{attest_port}")).await?;
+    eprintln!("[bountynet] Attestation endpoint listening on :{attest_port}");
+
+    // Spawn the attestation server in the background
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.ok();
+    });
+
+    // --- Step 7: Start the GitHub Actions runner ---
+    eprintln!("[bountynet] Starting GitHub Actions runner...");
+    let runner_bin = runner_dir.join("run.sh");
+
+    if runner_bin.exists() {
+        let status = Command::new(&runner_bin)
+            .current_dir(&runner_dir)
+            .env("BOUNTYNET_VALUE_X", hex::encode(value_x_hash))
+            .env("BOUNTYNET_ATTEST_PORT", attest_port.to_string())
+            .status()?;
+
+        eprintln!("[bountynet] Runner exited with: {status}");
+    } else {
+        eprintln!(
+            "[bountynet] Runner not found at {}. Running attestation endpoint only.",
+            runner_bin.display()
+        );
+        // Keep the process alive for the attestation endpoint
+        tokio::signal::ctrl_c().await?;
+    }
+
+    Ok(())
+}
