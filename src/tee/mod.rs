@@ -5,6 +5,8 @@
 //! running in at boot.
 
 pub mod detect;
+#[cfg(feature = "sev-snp")]
+pub mod kds;
 #[cfg(feature = "nitro")]
 pub mod nitro;
 #[cfg(feature = "sev-snp")]

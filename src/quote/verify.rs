@@ -505,17 +505,34 @@ fn verify_snp_quote(
 
         let digest = Sha384::digest(signed_data);
 
-        // Try to get VCEK from appended cert table
+        // Try to get VCEK from appended cert table (SNP_GET_EXT_REPORT path)
         let mut vcek_der: Option<Vec<u8>> = None;
         let mut ask_der: Option<Vec<u8>> = None;
         let mut ark_der: Option<Vec<u8>> = None;
 
-        // Cert table may be appended after the report (1152 or 1184 bytes)
-        if raw_quote.len() > 0x4A0 {
+        if raw_quote.len() > 0x480 {
             parse_snp_cert_table(raw_quote, &mut vcek_der, &mut ask_der, &mut ark_der);
-        } else if raw_quote.len() > 0x480 {
-            // Report may be 1152 bytes (stripped header), cert table follows
-            parse_snp_cert_table(raw_quote, &mut vcek_der, &mut ask_der, &mut ark_der);
+        }
+
+        // Fallback: fetch VCEK from AMD KDS if not in cert table
+        if vcek_der.is_none() {
+            if let Ok((product, chip_id, bl, tee, snp_ver, ucode)) =
+                crate::tee::kds::extract_kds_params(raw_quote)
+            {
+                match crate::tee::kds::fetch_vcek(&product, &chip_id, bl, tee, snp_ver, ucode) {
+                    Ok(vcek) => {
+                        vcek_der = Some(vcek);
+                        // Also fetch the cert chain
+                        if let Ok((ask, ark)) = crate::tee::kds::fetch_cert_chain(&product) {
+                            ask_der = Some(ask);
+                            ark_der = Some(ark);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[bountynet/verify] AMD KDS fetch failed: {e}");
+                    }
+                }
+            }
         }
 
         if let Some(ref vcek) = vcek_der {
@@ -546,8 +563,7 @@ fn verify_snp_quote(
                 verify_cert_chain_p384(ask, vcek)?; // ASK signed VCEK
             }
         }
-        // If no VCEK available, sig_verified stays false
-        // Signature field is present but we can't verify without the VCEK cert
+        // If no VCEK available (KDS also failed), sig_verified stays false
     }
 
     let mut measurements = vec![
