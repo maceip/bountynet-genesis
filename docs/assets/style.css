@@ -25,11 +25,13 @@
   --nitro:       #ff6b35;
   --snp:         #06b6d4;
   --tdx:         #a855f7;
-  --art-c1:      #06b6d4;
-  --art-c2:      #6366f1;
-  --art-c3:      #a855f7;
-  --art-c4:      #ec4899;
-  --glow:        rgba(99, 102, 241, 0.15);
+  --c-purple:    #a855f7;
+  --c-indigo:    #818cf8;
+  --c-cyan:      #06b6d4;
+  --c-green:     #22c55e;
+  --c-pink:      #ec4899;
+  --c-amber:     #f59e0b;
+  --c-rule:      #6366f1;
   --toggle-bg:   #1a1a24;
 }
 
@@ -54,11 +56,13 @@
   --nitro:       #c2410c;
   --snp:         #0e7490;
   --tdx:         #7c3aed;
-  --art-c1:      #0e7490;
-  --art-c2:      #4f46e5;
-  --art-c3:      #7c3aed;
-  --art-c4:      #be185d;
-  --glow:        rgba(79, 70, 229, 0.08);
+  --c-purple:    #7c3aed;
+  --c-indigo:    #6366f1;
+  --c-cyan:      #0891b2;
+  --c-green:     #16a34a;
+  --c-pink:      #db2777;
+  --c-amber:     #d97706;
+  --c-rule:      #4f46e5;
   --toggle-bg:   #e4e0d8;
 }
 
@@ -138,8 +142,8 @@ a:hover {
 
 .ascii-header {
   font-size: clamp(0.42rem, 1.08vw, 0.82rem);
-  line-height: 1.15;
-  text-align: center;
+  line-height: 1.2;
+  text-align: left;
   margin: 40px 0 0;
   padding: 0;
   overflow-x: auto;
@@ -156,36 +160,15 @@ a:hover {
   border-radius: 2px;
 }
 
-.art-border {
-  background: linear-gradient(90deg, var(--art-c1), var(--art-c2), var(--art-c3));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.art-primary {
-  background: linear-gradient(90deg, var(--art-c1), var(--art-c2), var(--art-c3), var(--art-c4));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.art-secondary {
-  background: linear-gradient(90deg, var(--art-c2), var(--art-c3), var(--art-c4));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.art-tagline {
-  color: var(--text-dim);
-  -webkit-text-fill-color: var(--text-dim);
-  letter-spacing: 0.05em;
-}
-
-.art-glow {
-  filter: drop-shadow(0 0 30px var(--glow)) drop-shadow(0 0 60px var(--glow));
-}
+/* Per-line color striping (Razor 1911 / cracktro style) */
+.c-purple { color: var(--c-purple); }
+.c-indigo { color: var(--c-indigo); }
+.c-cyan   { color: var(--c-cyan); }
+.c-green  { color: var(--c-green); }
+.c-pink   { color: var(--c-pink); }
+.c-amber  { color: var(--c-amber); }
+.c-rule   { color: var(--c-rule); }
+.c-dim    { color: var(--text-dim); letter-spacing: 0.05em; }
 
 /* ===== Zine Info ===== */
 
@@ -855,9 +838,9 @@ a:hover {
   transition-timing-function: ease;
 }
 
-/* Exclude art gradient from transitions (flickers) */
-.art-border, .art-primary, .art-secondary {
-  transition: none !important;
+/* Exclude art colors from transitions (flickers) */
+.c-purple, .c-indigo, .c-cyan, .c-green, .c-pink, .c-amber, .c-rule {
+  transition: color 0.25s ease !important;
 }
 
 /* ===== Scrollbar ===== */

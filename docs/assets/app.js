@@ -44,28 +44,25 @@ function dotfill(left, right, w) {
 }
 
 // ===== ASCII Art =====
-const BOUNTYNET = [
-  "██████   ██████  ██    ██ ███    ██ ████████ ██    ██ ███    ██ ███████ ████████",
-  "██   ██ ██    ██ ██    ██ ████   ██    ██     ██  ██  ████   ██ ██         ██   ",
-  "██████  ██    ██ ██    ██ ██ ██  ██    ██      ████   ██ ██  ██ █████      ██   ",
-  "██   ██ ██    ██ ██    ██ ██  ██ ██    ██       ██    ██  ██ ██ ██         ██   ",
-  "██████   ██████   ██████  ██   ████    ██       ██    ██   ████ ███████    ██   ",
+// Letters constructed from box-drawing characters in the tradition of
+// Razor 1911 / ACiD / iCE NFO art. Per-line color striping.
+const HEADER_ART = [
+  { text: '\u2554\u2550\u2550\u2550\u2550\u2550\u2555 \u2554\u2550\u2550\u2550\u2550\u2550\u2557 \u2551     \u2551 \u2551\u2557    \u2551 \u2550\u2550\u2550\u2566\u2550\u2550\u2550 \u2557     \u2554 \u2551\u2557    \u2551 \u2554\u2550\u2550\u2550\u2550\u2550\u2550 \u2550\u2550\u2550\u2566\u2550\u2550\u2550', cls: 'c-purple' },
+  { text: '\u2551     \u2502 \u2551     \u2551 \u2551     \u2551 \u2551\u255a\u2550\u2550\u2557 \u2551    \u2551    \u2560\u2557   \u2554\u2563 \u2551\u255a\u2550\u2550\u2557 \u2551 \u2551         \u2551   ', cls: 'c-indigo' },
+  { text: '\u2560\u2550\u2550\u2550\u2550\u2550\u2561 \u2551     \u2551 \u2551     \u2551 \u2551   \u255a\u2550\u2563    \u2551    \u255a\u2569\u2550\u2566\u2550\u2569\u255d \u2551   \u255a\u2550\u2563 \u2560\u2550\u2550\u2550\u2550\u2550    \u2551   ', cls: 'c-cyan' },
+  { text: '\u2551     \u2502 \u2551     \u2551 \u2551     \u2551 \u2551     \u2551    \u2551       \u2551    \u2551     \u2551 \u2551         \u2551   ', cls: 'c-green' },
+  { text: '\u255a\u2550\u2550\u2550\u2550\u2550\u255b \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u2551     \u2551    \u2551       \u2551    \u2551     \u2551 \u255a\u2550\u2550\u2550\u2550\u2550\u2550   \u2551   ', cls: 'c-pink' },
+  { text: '', cls: '' },
+  { text: '\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 \u00b7 \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550', cls: 'c-rule' },
+  { text: '', cls: '' },
+  { text: '        \u2554\u2550\u2550\u2550\u2550\u2550\u2557 \u2554\u2550\u2550\u2550\u2550\u2550\u2550 \u2551\u2557    \u2551 \u2554\u2550\u2550\u2550\u2550\u2550\u2550 \u2554\u2550\u2550\u2550\u2550\u2550\u2557 \u2550\u2550\u2550\u2566\u2550\u2550\u2550 \u2554\u2550\u2550\u2550\u2550\u2550\u2557', cls: 'c-cyan' },
+  { text: '        \u2551       \u2551       \u2551\u255a\u2550\u2550\u2557 \u2551 \u2551       \u2551          \u2551    \u2551      ', cls: 'c-indigo' },
+  { text: '        \u2551  \u2550\u2550\u2550\u2563 \u2560\u2550\u2550\u2550\u2550\u2550  \u2551   \u255a\u2550\u2563 \u2560\u2550\u2550\u2550\u2550\u2550  \u255a\u2550\u2550\u2550\u2550\u2550\u2557    \u2551    \u255a\u2550\u2550\u2550\u2550\u2550\u2557', cls: 'c-purple' },
+  { text: '        \u2551     \u2551 \u2551       \u2551     \u2551 \u2551            \u2551    \u2551          \u2551', cls: 'c-pink' },
+  { text: '        \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u2550\u2550\u2550\u2550\u2550 \u2551     \u2551 \u255a\u2550\u2550\u2550\u2550\u2550\u2550 \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u2550\u2550\u2550\u2569\u2550\u2550\u2550 \u255a\u2550\u2550\u2550\u2550\u2550\u255d', cls: 'c-amber' },
+  { text: '', cls: '' },
+  { text: '              \u00ab trust the build \u00b7 verify the machine \u00bb', cls: 'c-dim' },
 ];
-
-const GENESIS = [
-  " ██████  ███████ ███    ██ ███████ ███████ ██ ███████",
-  "██       ██      ████   ██ ██      ██      ██ ██     ",
-  "██   ███ █████   ██ ██  ██ █████   ███████ ██ ███████",
-  "██    ██ ██      ██  ██ ██ ██           ██ ██      ██",
-  " ██████  ███████ ██   ████ ███████ ███████ ██ ███████",
-];
-
-const SHADE_BORDER_TOP = [
-  '░'.repeat(W),
-  '░' + '▒'.repeat(W - 2) + '░',
-  '░▒' + '▓'.repeat(W - 4) + '▒░',
-];
-const SHADE_BORDER_BOT = [...SHADE_BORDER_TOP].reverse();
 
 
 // ===== Contract ABI =====
@@ -125,20 +122,8 @@ function ThemeToggle({ theme, onToggle }) {
 }
 
 function AsciiHeader() {
-  const allLines = [
-    ...SHADE_BORDER_TOP.map(l => ({ text: l, cls: 'art-border' })),
-    { text: '', cls: '' },
-    ...BOUNTYNET.map(l => ({ text: l, cls: 'art-primary' })),
-    { text: '', cls: '' },
-    { text: center('\u00b7  t r u s t   t h e   b u i l d  \u00b7', W), cls: 'art-tagline' },
-    { text: '', cls: '' },
-    ...GENESIS.map(l => ({ text: center(l, W), cls: 'art-secondary' })),
-    { text: '', cls: '' },
-    ...SHADE_BORDER_BOT.map(l => ({ text: l, cls: 'art-border' })),
-  ];
-
-  return html`<pre class="ascii-header art-glow" aria-label="BOUNTYNET GENESIS">${
-    allLines.map((l, i) =>
+  return html`<pre class="ascii-header" aria-label="BOUNTYNET GENESIS">${
+    HEADER_ART.map((l, i) =>
       html`<span key=${i} class=${l.cls}>${l.text}</span>${'\n'}`
     )
   }</pre>`;
