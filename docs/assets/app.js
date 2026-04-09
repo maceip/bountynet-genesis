@@ -43,26 +43,85 @@ function dotfill(left, right, w) {
   return left + ' ' + '.'.repeat(Math.max(3, dots)) + ' ' + right;
 }
 
-// ===== ASCII Art =====
-// Letters constructed from box-drawing characters in the tradition of
-// Razor 1911 / ACiD / iCE NFO art. Per-line color striping.
-const HEADER_ART = [
-  { text: '\u2554\u2550\u2550\u2550\u2550\u2550\u2555 \u2554\u2550\u2550\u2550\u2550\u2550\u2557 \u2551     \u2551 \u2551\u2557    \u2551 \u2550\u2550\u2550\u2566\u2550\u2550\u2550 \u2557     \u2554 \u2551\u2557    \u2551 \u2554\u2550\u2550\u2550\u2550\u2550\u2550 \u2550\u2550\u2550\u2566\u2550\u2550\u2550', cls: 'c-purple' },
-  { text: '\u2551     \u2502 \u2551     \u2551 \u2551     \u2551 \u2551\u255a\u2550\u2550\u2557 \u2551    \u2551    \u2560\u2557   \u2554\u2563 \u2551\u255a\u2550\u2550\u2557 \u2551 \u2551         \u2551   ', cls: 'c-indigo' },
-  { text: '\u2560\u2550\u2550\u2550\u2550\u2550\u2561 \u2551     \u2551 \u2551     \u2551 \u2551   \u255a\u2550\u2563    \u2551    \u255a\u2569\u2550\u2566\u2550\u2569\u255d \u2551   \u255a\u2550\u2563 \u2560\u2550\u2550\u2550\u2550\u2550    \u2551   ', cls: 'c-cyan' },
-  { text: '\u2551     \u2502 \u2551     \u2551 \u2551     \u2551 \u2551     \u2551    \u2551       \u2551    \u2551     \u2551 \u2551         \u2551   ', cls: 'c-green' },
-  { text: '\u255a\u2550\u2550\u2550\u2550\u2550\u255b \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u2551     \u2551    \u2551       \u2551    \u2551     \u2551 \u255a\u2550\u2550\u2550\u2550\u2550\u2550   \u2551   ', cls: 'c-pink' },
-  { text: '', cls: '' },
-  { text: '\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 \u00b7 \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550', cls: 'c-rule' },
-  { text: '', cls: '' },
-  { text: '        \u2554\u2550\u2550\u2550\u2550\u2550\u2557 \u2554\u2550\u2550\u2550\u2550\u2550\u2550 \u2551\u2557    \u2551 \u2554\u2550\u2550\u2550\u2550\u2550\u2550 \u2554\u2550\u2550\u2550\u2550\u2550\u2557 \u2550\u2550\u2550\u2566\u2550\u2550\u2550 \u2554\u2550\u2550\u2550\u2550\u2550\u2557', cls: 'c-cyan' },
-  { text: '        \u2551       \u2551       \u2551\u255a\u2550\u2550\u2557 \u2551 \u2551       \u2551          \u2551    \u2551      ', cls: 'c-indigo' },
-  { text: '        \u2551  \u2550\u2550\u2550\u2563 \u2560\u2550\u2550\u2550\u2550\u2550  \u2551   \u255a\u2550\u2563 \u2560\u2550\u2550\u2550\u2550\u2550  \u255a\u2550\u2550\u2550\u2550\u2550\u2557    \u2551    \u255a\u2550\u2550\u2550\u2550\u2550\u2557', cls: 'c-purple' },
-  { text: '        \u2551     \u2551 \u2551       \u2551     \u2551 \u2551            \u2551    \u2551          \u2551', cls: 'c-pink' },
-  { text: '        \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u2550\u2550\u2550\u2550\u2550 \u2551     \u2551 \u255a\u2550\u2550\u2550\u2550\u2550\u2550 \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u2550\u2550\u2550\u2569\u2550\u2550\u2550 \u255a\u2550\u2550\u2550\u2550\u2550\u255d', cls: 'c-amber' },
-  { text: '', cls: '' },
-  { text: '              \u00ab trust the build \u00b7 verify the machine \u00bb', cls: 'c-dim' },
-];
+// ===== ASCII Art — 3D extruded block letters =====
+// Front face rendered with per-line rainbow striping.
+// Shadow layer (same text, CSS-offset) creates the depth extrusion.
+const L = {
+  B: [
+    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ',
+    '\u2588\u2588     \u2588\u2588 ',
+    '\u2588\u2588     \u2588\u2588 ',
+    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ',
+    '\u2588\u2588     \u2588\u2588 ',
+    '\u2588\u2588     \u2588\u2588 ',
+    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ',
+  ],
+  O: [
+    ' \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ',
+    '\u2588\u2588      \u2588\u2588',
+    '\u2588\u2588      \u2588\u2588',
+    '\u2588\u2588      \u2588\u2588',
+    '\u2588\u2588      \u2588\u2588',
+    '\u2588\u2588      \u2588\u2588',
+    ' \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ',
+  ],
+  U: [
+    '\u2588\u2588      \u2588\u2588',
+    '\u2588\u2588      \u2588\u2588',
+    '\u2588\u2588      \u2588\u2588',
+    '\u2588\u2588      \u2588\u2588',
+    '\u2588\u2588      \u2588\u2588',
+    '\u2588\u2588      \u2588\u2588',
+    ' \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ',
+  ],
+  N: [
+    '\u2588\u2588\u2588     \u2588\u2588',
+    '\u2588\u2588\u2588\u2588    \u2588\u2588',
+    '\u2588\u2588 \u2588\u2588   \u2588\u2588',
+    '\u2588\u2588  \u2588\u2588  \u2588\u2588',
+    '\u2588\u2588   \u2588\u2588 \u2588\u2588',
+    '\u2588\u2588    \u2588\u2588\u2588\u2588',
+    '\u2588\u2588     \u2588\u2588\u2588',
+  ],
+  T: [
+    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588',
+    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588',
+    '    \u2588\u2588    ',
+    '    \u2588\u2588    ',
+    '    \u2588\u2588    ',
+    '    \u2588\u2588    ',
+    '    \u2588\u2588    ',
+  ],
+  Y: [
+    '\u2588\u2588      \u2588\u2588',
+    ' \u2588\u2588    \u2588\u2588 ',
+    '  \u2588\u2588  \u2588\u2588  ',
+    '   \u2588\u2588\u2588\u2588   ',
+    '    \u2588\u2588    ',
+    '    \u2588\u2588    ',
+    '    \u2588\u2588    ',
+  ],
+  E: [
+    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588',
+    '\u2588\u2588        ',
+    '\u2588\u2588        ',
+    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588   ',
+    '\u2588\u2588        ',
+    '\u2588\u2588        ',
+    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588',
+  ],
+};
+
+function composeWord(chars, gap) {
+  const letters = chars.map(c => L[c]);
+  return letters[0].map((_, r) => letters.map(l => l[r]).join(gap));
+}
+
+const BOUNTY_ROWS = composeWord(['B','O','U','N','T','Y'], '  ');
+const NET_ROWS = composeWord(['N','E','T'], '  ');
+const ART_W = BOUNTY_ROWS[0].length;
+const NET_PAD = Math.floor((ART_W - NET_ROWS[0].length) / 2);
+const FRONT_COLORS = ['c-purple','c-indigo','c-cyan','c-green','c-pink','c-amber','c-purple'];
 
 
 // ===== Contract ABI =====
@@ -122,11 +181,27 @@ function ThemeToggle({ theme, onToggle }) {
 }
 
 function AsciiHeader() {
-  return html`<pre class="ascii-header" aria-label="BOUNTYNET GENESIS">${
-    HEADER_ART.map((l, i) =>
-      html`<span key=${i} class=${l.cls}>${l.text}</span>${'\n'}`
-    )
-  }</pre>`;
+  const allRows = [
+    ...BOUNTY_ROWS,
+    '',
+    ...NET_ROWS.map(l => ' '.repeat(NET_PAD) + l),
+  ];
+  const colors = [
+    ...FRONT_COLORS,
+    '',
+    ...FRONT_COLORS,
+  ];
+  const plainText = allRows.join('\n');
+
+  return html`<div class="ascii-header">
+    <div class="art-3d">
+      <pre class="art-layer art-shadow" aria-hidden="true">${plainText}</pre>
+      <pre class="art-layer art-front" aria-label="BOUNTY NET">${
+        allRows.map((l, i) => html`<span key=${i} class=${colors[i] || ''}>${l}</span>${'\n'}`)
+      }</pre>
+    </div>
+    <pre class="art-sub"><span class="c-rule">${'\u2550'.repeat(ART_W)}</span>${'\n'}<span class="c-dim">${center('\u00ab g e n e s i s \u00bb', ART_W)}</span>${'\n'}<span class="c-dim">${center('trust the build \u00b7 verify the machine', ART_W)}</span></pre>
+  </div>`;
 }
 
 function ZineInfo() {

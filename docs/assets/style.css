@@ -32,6 +32,7 @@
   --c-pink:      #ec4899;
   --c-amber:     #f59e0b;
   --c-rule:      #6366f1;
+  --c-shadow:    #2e1065;
   --toggle-bg:   #1a1a24;
 }
 
@@ -63,6 +64,7 @@
   --c-pink:      #db2777;
   --c-amber:     #d97706;
   --c-rule:      #4f46e5;
+  --c-shadow:    #c4b5fd;
   --toggle-bg:   #e4e0d8;
 }
 
@@ -141,15 +143,8 @@ a:hover {
 /* ===== ASCII Art Header ===== */
 
 .ascii-header {
-  font-size: clamp(0.42rem, 1.08vw, 0.82rem);
-  line-height: 1.2;
-  text-align: left;
   margin: 40px 0 0;
-  padding: 0;
   overflow-x: auto;
-  white-space: pre;
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 .ascii-header::-webkit-scrollbar {
@@ -158,6 +153,46 @@ a:hover {
 .ascii-header::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 2px;
+}
+
+/* 3D extrusion: two identical text layers, shadow offset behind front */
+.art-3d {
+  position: relative;
+  display: inline-block;
+}
+.art-layer {
+  font-family: inherit;
+  font-size: clamp(0.38rem, 1vw, 0.75rem);
+  line-height: 1.1;
+  white-space: pre;
+  margin: 0;
+  padding: 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.art-shadow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding-top: 0.22em;
+  padding-left: 1ch;
+  color: var(--c-shadow);
+  z-index: 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.art-front {
+  position: relative;
+  z-index: 1;
+}
+.art-sub {
+  font-family: inherit;
+  font-size: clamp(0.38rem, 1vw, 0.75rem);
+  line-height: 1.6;
+  white-space: pre;
+  margin: 0.5em 0 0;
+  padding: 0;
 }
 
 /* Per-line color striping (Razor 1911 / cracktro style) */
