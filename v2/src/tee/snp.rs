@@ -86,6 +86,18 @@ impl SnpProvider {
 
 impl TeeProvider for SnpProvider {
     fn collect_evidence(&self, report_data: &[u8; 64]) -> Result<TeeEvidence, TeeError> {
+        // Prefer configfs-tsm on Linux 6.7+ (works for SNP too)
+        let tsm_report = std::path::Path::new("/sys/kernel/config/tsm/report");
+        if tsm_report.exists() {
+            match collect_via_configfs_tsm(report_data) {
+                Ok(evidence) => return Ok(evidence),
+                Err(e) => {
+                    eprintln!("[bountynet/snp] configfs-tsm failed ({e}), falling back to ioctl");
+                }
+            }
+        }
+
+        // Fall back to /dev/sev-guest ioctl
         let fd = OpenOptions::new()
             .read(true)
             .write(true)
@@ -230,6 +242,45 @@ impl SnpProvider {
             cert_chain: Vec::new(),
         })
     }
+}
+
+/// Collect SNP evidence via configfs-tsm (Linux 6.7+).
+/// Same interface as TDX configfs-tsm but provider is "sev_guest".
+fn collect_via_configfs_tsm(report_data: &[u8; 64]) -> Result<TeeEvidence, TeeError> {
+    use std::fs;
+
+    let report_name = format!("bountynet-snp-{}", std::process::id());
+    let report_dir = format!("/sys/kernel/config/tsm/report/{report_name}");
+
+    fs::create_dir(&report_dir).map_err(|e| {
+        TeeError::DeviceNotFound(format!("Failed to create {report_dir}: {e}"))
+    })?;
+
+    // Write report_data
+    fs::write(format!("{report_dir}/inblob"), report_data).map_err(|e| {
+        let _ = fs::remove_dir(&report_dir);
+        TeeError::InvalidResponse(format!("Failed to write inblob: {e}"))
+    })?;
+
+    // Read the quote
+    let quote = fs::read(format!("{report_dir}/outblob")).map_err(|e| {
+        let _ = fs::remove_dir(&report_dir);
+        TeeError::InvalidResponse(format!("Failed to read outblob: {e}"))
+    })?;
+
+    // Try auxblob for certs
+    let cert_chain = match fs::read(format!("{report_dir}/auxblob")) {
+        Ok(aux) => vec![aux],
+        Err(_) => Vec::new(),
+    };
+
+    let _ = fs::remove_dir(&report_dir);
+
+    Ok(TeeEvidence {
+        platform: Platform::SevSnp,
+        raw_quote: quote,
+        cert_chain,
+    })
 }
 
 /// Parse the SNP certificate table format.
