@@ -1,44 +1,54 @@
-//! Known-good Value X registry.
+//! Known-good registry: Value X + platform measurements.
 //!
-//! Maintains a list of trusted Value X hashes, each linked to:
-//! - The git commit that produced the runner image
-//! - The build attestation hash (Sigstore provenance)
-//! - The runner version
-//! - When it was registered
+//! See INVARIANT.md. A verifier must check TWO things:
+//!   1. Platform measurement (MRTD/MEASUREMENT/PCR0) matches expected
+//!   2. Value X matches expected
 //!
-//! Verifiers can check: "Is this Value X in the registry?"
-//! If yes, the runner is running a known release.
-//! If no, it's either a new/unknown build or has been tampered with.
-//!
-//! The registry is published as a signed JSON file in the repo
-//! and can be fetched by verifiers.
+//! This registry stores both. Without the platform measurement check,
+//! Value X alone proves nothing — a compromised shim could lie about it.
 
 use serde::{Deserialize, Serialize};
 
-/// A single entry in the Value X registry.
+/// A single entry: one known-good build.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryEntry {
-    /// The Value X hash (hex-encoded sha384).
+    /// Value X: sha384 of runner files (NOT the shim). Hex-encoded.
     pub value_x: String,
-    /// Git commit SHA that produced this build.
+
+    /// Expected platform measurements for this build.
+    /// Verifier checks the quote's measurement against these.
+    /// At least one must be present for the entry to be useful.
+    #[serde(default)]
+    pub platform_measurements: PlatformMeasurements,
+
+    /// Git commit that produced this build.
     pub git_commit: String,
-    /// Runner version (e.g., "2.323.0").
+    /// Runner version.
     pub runner_version: String,
-    /// sha256 of the GitHub Actions build attestation (Sigstore bundle).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub build_attestation_hash: Option<String>,
-    /// Docker image digest (sha256).
+    /// Docker image digest.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_digest: Option<String>,
-    /// When this entry was registered (ISO 8601).
+    /// When registered.
     pub registered_at: String,
-    /// Whether this version is currently recommended.
     pub recommended: bool,
-    /// Whether this version has known security issues.
     pub deprecated: bool,
-    /// Human-readable notes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+}
+
+/// Expected platform measurements per TEE type.
+/// These come from building the image and recording what the TEE measures.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlatformMeasurements {
+    /// TDX: hex(MRTD) — hash of the TD image at launch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tdx_mrtd: Option<String>,
+    /// SNP: hex(MEASUREMENT) — hash of the guest image at launch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snp_measurement: Option<String>,
+    /// Nitro: hex(PCR0) — hash of the enclave image.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nitro_pcr0: Option<String>,
 }
 
 /// The full registry.

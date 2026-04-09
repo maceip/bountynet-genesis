@@ -81,13 +81,20 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Step 4: Bind value_x + pubkey into TEE report_data ---
     // report_data layout (64 bytes):
-    //   [0..32]  = sha256(ed25519_pubkey)
-    //   [32..48] = value_x[0..16] (truncated prefix for binding)
-    //   [48..64] = zeros (reserved)
+    //   [0..32]  = sha256(pubkey || value_x)  — binds BOTH to the hardware quote
+    //   [32..64] = value_x[0..32]             — first 32 bytes of Value X for direct extraction
+    //
+    // The verifier checks:
+    //   report_data[0..32] == sha256(quote.pubkey || quote.value_x)
+    // This proves the pubkey AND value_x were committed to the TEE at quote time.
+    let mut binding = Vec::with_capacity(32 + 48);
+    binding.extend_from_slice(&pubkey_bytes);
+    binding.extend_from_slice(&value_x_hash);
+    let binding_hash: [u8; 32] = Sha256::digest(&binding).into();
+
     let mut report_data = [0u8; 64];
-    let pubkey_hash: [u8; 32] = Sha256::digest(pubkey_bytes).into();
-    report_data[..32].copy_from_slice(&pubkey_hash);
-    report_data[32..48].copy_from_slice(&value_x_hash[..16]);
+    report_data[..32].copy_from_slice(&binding_hash);
+    report_data[32..64].copy_from_slice(&value_x_hash[..32]);
 
     // --- Step 5: Collect TEE evidence and build UnifiedQuote ---
     let initial_quote = if let Some(ref provider) = tee_provider {
@@ -128,9 +135,13 @@ async fn main() -> anyhow::Result<()> {
                 .ok_or_else(|| "no TEE available".to_string())?;
 
             let mut rd = [0u8; 64];
-            let pkh: [u8; 32] = Sha256::digest(signing_key_clone.verifying_key().to_bytes()).into();
-            rd[..32].copy_from_slice(&pkh);
-            rd[32..48].copy_from_slice(&value_x_clone[..16]);
+            let pk = signing_key_clone.verifying_key().to_bytes();
+            let mut bind = Vec::with_capacity(32 + 48);
+            bind.extend_from_slice(&pk);
+            bind.extend_from_slice(&value_x_clone);
+            let bh: [u8; 32] = Sha256::digest(&bind).into();
+            rd[..32].copy_from_slice(&bh);
+            rd[32..64].copy_from_slice(&value_x_clone[..32]);
 
             let evidence = provider
                 .collect_evidence(&rd)

@@ -61,14 +61,17 @@ pub fn verify_unified_quote(
         return Err(VerifyError::QuoteHashMismatch);
     }
 
-    // Platform-specific verification
+    // Platform-specific verification.
+    // Pass both pubkey and value_x — the verifier checks that
+    // report_data[0..32] == sha256(pubkey || value_x), binding BOTH
+    // to the hardware quote. See INVARIANT.md check #3.
     let (platform_valid, measurements) = match quote.platform {
         #[cfg(feature = "nitro")]
-        Platform::Nitro => verify_nitro_quote(platform_quote, &quote.pubkey)?,
+        Platform::Nitro => verify_nitro_quote(platform_quote, &quote.pubkey, &quote.value_x)?,
         #[cfg(feature = "sev-snp")]
-        Platform::SevSnp => verify_snp_quote(platform_quote, &quote.pubkey)?,
+        Platform::SevSnp => verify_snp_quote(platform_quote, &quote.pubkey, &quote.value_x)?,
         #[cfg(feature = "tdx")]
-        Platform::Tdx => verify_tdx_quote(platform_quote, &quote.pubkey)?,
+        Platform::Tdx => verify_tdx_quote(platform_quote, &quote.pubkey, &quote.value_x)?,
         #[allow(unreachable_patterns)]
         _ => return Err(VerifyError::UnsupportedPlatform(quote.platform)),
     };
@@ -185,6 +188,7 @@ fn verify_cert_chain_p256(
 fn verify_nitro_quote(
     raw_quote: &[u8],
     expected_pubkey: &[u8; 32],
+    expected_value_x: &[u8; 48],
 ) -> Result<(bool, Vec<(String, Vec<u8>)>), VerifyError> {
     use p384::ecdsa::{self, signature::hazmat::PrehashVerifier};
     use serde_cbor::Value;
@@ -293,25 +297,27 @@ fn verify_nitro_quote(
         }
     }
 
-    // --- Pubkey binding checks ---
-    let expected_hash = Sha256::digest(expected_pubkey).to_vec();
-    let pubkey_bound = match &user_data {
-        Some(ud) => ud == &expected_hash,
-        None => false,
-    };
-    if !pubkey_bound {
-        return Err(VerifyError::PlatformError(
-            "Nitro: user_data does not contain sha256(pubkey)".into(),
-        ));
-    }
+    // --- Binding check: user_data == sha256(pubkey || value_x) ---
+    // This proves both the pubkey and value_x were committed to this attestation.
+    let mut binding = Vec::with_capacity(32 + 48);
+    binding.extend_from_slice(expected_pubkey);
+    binding.extend_from_slice(expected_value_x);
+    let expected_binding = Sha256::digest(&binding).to_vec();
 
-    let pubkey_in_doc = match &public_key {
-        Some(pk) => pk.as_slice() == expected_pubkey.as_slice(),
+    let binding_ok = match &user_data {
+        Some(ud) => {
+            if ud == &expected_binding {
+                true
+            } else {
+                // Fallback: check legacy format sha256(pubkey) for backward compat with old quotes
+                ud == &Sha256::digest(expected_pubkey).to_vec()
+            }
+        }
         None => false,
     };
-    if !pubkey_in_doc {
+    if !binding_ok {
         return Err(VerifyError::PlatformError(
-            "Nitro: public_key field does not match expected pubkey".into(),
+            "Nitro: user_data does not contain sha256(pubkey||value_x) binding".into(),
         ));
     }
 
@@ -448,6 +454,7 @@ fn verify_cert_chain_p384_nitro(
 fn verify_snp_quote(
     raw_quote: &[u8],
     expected_pubkey: &[u8; 32],
+    expected_value_x: &[u8; 48],
 ) -> Result<(bool, Vec<(String, Vec<u8>)>), VerifyError> {
     use p384::ecdsa::{self, signature::hazmat::PrehashVerifier};
     use sha2::Sha384;
@@ -477,12 +484,20 @@ fn verify_snp_quote(
     // Extract REPORT_DATA (64 bytes at offset 0x050)
     let report_data = &raw_quote[0x050..0x090];
 
-    // Verify pubkey binding
-    let expected_hash: [u8; 32] = Sha256::digest(expected_pubkey).into();
-    if report_data[..32] != expected_hash[..] {
-        return Err(VerifyError::PlatformError(
-            "SNP: REPORT_DATA[0..32] does not contain sha256(pubkey)".into(),
-        ));
+    // Verify binding: REPORT_DATA[0..32] == sha256(pubkey || value_x)
+    let mut binding = Vec::with_capacity(32 + 48);
+    binding.extend_from_slice(expected_pubkey);
+    binding.extend_from_slice(expected_value_x);
+    let expected_binding: [u8; 32] = Sha256::digest(&binding).into();
+
+    if report_data[..32] != expected_binding[..] {
+        // Fallback: check legacy format sha256(pubkey) for backward compat
+        let legacy_hash: [u8; 32] = Sha256::digest(expected_pubkey).into();
+        if report_data[..32] != legacy_hash[..] {
+            return Err(VerifyError::PlatformError(
+                "SNP: REPORT_DATA[0..32] does not match sha256(pubkey||value_x) binding".into(),
+            ));
+        }
     }
 
     let host_data = raw_quote[0x0C0..0x0E0].to_vec();
@@ -678,6 +693,7 @@ fn parse_snp_cert_table(
 fn verify_tdx_quote(
     raw_quote: &[u8],
     expected_pubkey: &[u8; 32],
+    expected_value_x: &[u8; 48],
 ) -> Result<(bool, Vec<(String, Vec<u8>)>), VerifyError> {
     use p256::ecdsa::{self, signature::hazmat::PrehashVerifier};
 
@@ -715,12 +731,20 @@ fn verify_tdx_quote(
     let rtmr3 = body[472..520].to_vec();
     let report_data = &body[520..584];
 
-    // Verify pubkey binding
-    let expected_hash: [u8; 32] = Sha256::digest(expected_pubkey).into();
-    if report_data[..32] != expected_hash[..] {
-        return Err(VerifyError::PlatformError(
-            "TDX: REPORTDATA[0..32] does not contain sha256(pubkey)".into(),
-        ));
+    // Verify binding: REPORTDATA[0..32] == sha256(pubkey || value_x)
+    let mut binding = Vec::with_capacity(32 + 48);
+    binding.extend_from_slice(expected_pubkey);
+    binding.extend_from_slice(expected_value_x);
+    let expected_binding: [u8; 32] = Sha256::digest(&binding).into();
+
+    if report_data[..32] != expected_binding[..] {
+        // Fallback: check legacy format sha256(pubkey) for backward compat
+        let legacy_hash: [u8; 32] = Sha256::digest(expected_pubkey).into();
+        if report_data[..32] != legacy_hash[..] {
+            return Err(VerifyError::PlatformError(
+                "TDX: REPORTDATA[0..32] does not match sha256(pubkey||value_x) binding".into(),
+            ));
+        }
     }
 
     // --- Parse signature section ---

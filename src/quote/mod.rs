@@ -8,6 +8,7 @@
 //! - Off-chain: full quote available for deep verification
 
 pub mod eat;
+pub mod roots;
 pub mod value_x;
 pub mod verify;
 

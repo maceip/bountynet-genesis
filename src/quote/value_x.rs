@@ -29,14 +29,10 @@ pub fn compute_value_x(runner_dir: &Path) -> std::io::Result<[u8; 48]> {
 
     let mut hasher = Sha384::new();
 
-    // Hash the shim binary itself (this binary)
-    if let Ok(self_path) = std::env::current_exe() {
-        if let Ok(bytes) = std::fs::read(&self_path) {
-            let h = sha384(&bytes);
-            hasher.update(b"shim:");
-            hasher.update(h);
-        }
-    }
+    // The shim binary is NOT included in Value X.
+    // The shim is measured by the TEE hardware (MRTD/MEASUREMENT/PCR0).
+    // Value X measures the runner payload — the files the shim manages.
+    // See INVARIANT.md: check #1 covers the shim, check #2 covers Value X.
 
     // Hash all runner files in deterministic order
     for (rel_path, file_hash) in &entries {
