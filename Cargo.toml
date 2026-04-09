@@ -6,7 +6,7 @@ description = "Attestation shim for GitHub Actions runners in TEEs"
 
 [features]
 default = ["nitro", "sev-snp", "tdx"]
-nitro = ["dep:serde_cbor"]
+nitro = ["dep:serde_cbor", "dep:aws-nitro-enclaves-nsm-api", "dep:serde_bytes"]
 sev-snp = ["dep:p384"]
 tdx = ["dep:p256"]
 # Future: sgx (backport from tdx)
@@ -32,8 +32,10 @@ tower = { version = "0.5", features = ["limit"] }
 ciborium = "0.2"
 coset = "0.3"
 
-# Nitro attestation doc parsing (uses serde_cbor for COSE_Sign1 payload)
+# Nitro attestation doc parsing + NSM device communication
 serde_cbor = { version = "0.11", optional = true }
+aws-nitro-enclaves-nsm-api = { version = "0.5", features = ["nix"], optional = true }
+serde_bytes = { version = "0.11", optional = true }
 
 # Crypto verification (ECDSA for platform quote signatures)
 p384 = { version = "0.13", features = ["ecdsa"], optional = true }
