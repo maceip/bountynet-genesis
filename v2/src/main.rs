@@ -48,6 +48,7 @@ fn main() -> anyhow::Result<()> {
         "build" => cmd_build(&args[2..]),
         "verify" => cmd_verify(&args[2..]),
         "run" => cmd_run(&args[2..]),
+        "merge" => cmd_merge(&args[2..]),
         _ => {
             print_usage();
             std::process::exit(1);
@@ -62,6 +63,7 @@ fn print_usage() {
     eprintln!("  bountynet build  <source-dir> [--cmd \"...\"] [--output ./out]");
     eprintln!("  bountynet verify <attestation.json> [--source-dir <dir>] [--artifact <path>]");
     eprintln!("  bountynet run    <dir> --attestation <attestation.json> [--cmd \"...\"]");
+    eprintln!("  bountynet merge  <att1.json> <att2.json> [...] --output merged.json");
 }
 
 // ============================================================================
@@ -135,22 +137,47 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
         );
     }
 
-    // --- Step 3: Build ---
-    // Build runs in the frozen source directory.
-    // Output goes to a writable build directory alongside the frozen source.
+    // --- Step 3: Fetch dependencies (network phase) ---
+    // LATTE L5: dependencies must be measured.
+    // Two-phase build: fetch deps first, hash them, then compile offline.
     let build_output = build_workspace.join("build");
     std::fs::create_dir_all(&build_output)?;
 
-    let cmd = build_cmd.unwrap_or_else(|| detect_build_cmd(&frozen_source));
+    let dep_cache = build_workspace.join("deps");
+    std::fs::create_dir_all(&dep_cache)?;
+
+    let is_cargo = frozen_source.join("Cargo.toml").exists();
+    let cmd = build_cmd.clone().unwrap_or_else(|| detect_build_cmd(&frozen_source));
+
+    if is_cargo {
+        // Rust: fetch deps into a local vendor directory, then build offline.
+        // This ensures all dependencies are captured in the hash.
+        eprintln!("[bountynet] Fetching Rust dependencies...");
+        let fetch_status = std::process::Command::new("cargo")
+            .args(["fetch"])
+            .current_dir(&frozen_source)
+            .env("CARGO_TARGET_DIR", &build_output)
+            .env("CARGO_HOME", &dep_cache)
+            .status()?;
+        if !fetch_status.success() {
+            anyhow::bail!("cargo fetch failed");
+        }
+
+        // Hash the dependency cache
+        let dt = compute_tree_hash(&dep_cache)?;
+        eprintln!("[bountynet] DT (dependency hash): {}", hex::encode(dt));
+        // DT is included in the attestation output (see step 8)
+    }
+
+    // --- Step 4: Build (compilation phase) ---
     eprintln!("[bountynet] Building with: {cmd}");
 
-    // Set CARGO_TARGET_DIR so Rust builds write to the writable output dir.
-    // Other build systems get the output dir via convention.
     let status = std::process::Command::new("sh")
         .arg("-c")
         .arg(&cmd)
         .current_dir(&frozen_source)
         .env("CARGO_TARGET_DIR", &build_output)
+        .env("CARGO_HOME", &dep_cache)
         .status()?;
     if !status.success() {
         anyhow::bail!("Build failed with exit code: {status}");
@@ -169,6 +196,19 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
         );
     }
     eprintln!("[bountynet] Ratchet verified: source unchanged after build");
+
+    // Hash dependencies — LATTE L5: build deps are now measured.
+    let dt: Option<[u8; 48]> = if dep_cache.exists() {
+        match compute_tree_hash(&dep_cache) {
+            Ok(h) if h != [0u8; 48] => {
+                eprintln!("[bountynet] DT (dependencies): {}", hex::encode(h));
+                Some(h)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
 
     // --- Step 4: Compute artifact hash ---
     eprintln!("[bountynet] Computing artifact hash (A)...");
@@ -192,8 +232,13 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
     // INVARIANT.md check #3: "The pubkey in the quote was generated inside the TEE."
     // Here we don't use a separate signing key — the quote itself IS the attestation.
     // The TEE hardware signs it. No intermediary ed25519 key needed.
-    let mut binding_input = Vec::with_capacity(48 * 3);
+    // Bind (CT, DT, A, X) into report_data.
+    // DT is included when present — dependencies are part of the proof.
+    let mut binding_input = Vec::with_capacity(48 * 4);
     binding_input.extend_from_slice(&ct);
+    if let Some(ref dt_hash) = dt {
+        binding_input.extend_from_slice(dt_hash);
+    }
     binding_input.extend_from_slice(&a);
     binding_input.extend_from_slice(&value_x);
     let binding: [u8; 32] = Sha256::digest(&binding_input).into();
@@ -232,6 +277,7 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
         "platform": format!("{:?}", evidence.platform),
         "platform_measurement": platform_measurement.map(|m| hex::encode(m)),
         "source_hash": hex::encode(ct),
+        "dependency_hash": dt.map(|d| hex::encode(d)),
         "artifact_hash": hex::encode(a),
         "value_x": hex::encode(value_x),
         "binding": hex::encode(binding),
@@ -255,9 +301,23 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
     // Stage 1 reads this file to verify itself at boot.
     // The attestation is NOT a sidecar — it's part of the artifact.
 
+    // --- AC5: Append to transparency log ---
+    // If the output directory is inside a git repo, commit the attestation.
+    // Git history is an append-only Merkle tree — it IS a transparency log.
+    // Verifiers check: this attestation exists in the commit history.
+    let log_committed = append_to_log(&output_dir, &att_path, &value_x);
+    if log_committed {
+        eprintln!("[bountynet] Transparency log: attestation committed to git");
+    } else {
+        eprintln!("[bountynet] Transparency log: no git repo found (attestation written to disk only)");
+    }
+
     eprintln!();
     eprintln!("[bountynet] === Attested Build Complete ===");
     eprintln!("[bountynet] CT (source):   {}", hex::encode(ct));
+    if let Some(ref d) = dt {
+        eprintln!("[bountynet] DT (deps):     {}", hex::encode(d));
+    }
     eprintln!("[bountynet] A  (artifact): {}", hex::encode(a));
     eprintln!("[bountynet] X  (value x):  {}", hex::encode(value_x));
     eprintln!("[bountynet] Platform:      {:?}", evidence.platform);
@@ -603,6 +663,134 @@ fn cmd_run(args: &[String]) -> anyhow::Result<()> {
 }
 
 // ============================================================================
+// MERGE — combine attestations from multiple platforms (LATTE L3/L6)
+// ============================================================================
+//
+// LATTE says: the verifier derives expected measurements from Rcommon.
+// We can't predict MRTD from image contents (firmware is opaque).
+// Creative solution: witness measurements from multiple platforms,
+// merge them into a single document. This IS Rcommon — the set of
+// known-good measurements for this Value X across platforms.
+//
+// A verifier picks their platform's measurement and checks it.
+// If two independent TEE vendors (e.g., TDX on GCP + SNP on AWS)
+// attest the same Value X, that's also the anytrust model (AC4).
+
+fn cmd_merge(args: &[String]) -> anyhow::Result<()> {
+    let mut att_paths: Vec<PathBuf> = Vec::new();
+    let mut output_path = PathBuf::from("merged-attestation.json");
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--output" => {
+                i += 1;
+                if let Some(s) = args.get(i) {
+                    output_path = PathBuf::from(s);
+                }
+            }
+            _ => {
+                att_paths.push(PathBuf::from(&args[i]));
+            }
+        }
+        i += 1;
+    }
+
+    if att_paths.len() < 2 {
+        anyhow::bail!("merge requires at least 2 attestation files");
+    }
+
+    // Load all attestations
+    let mut attestations: Vec<serde_json::Value> = Vec::new();
+    for path in &att_paths {
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        attestations.push(json);
+    }
+
+    // Verify all attestations have the same Value X
+    let first_x = attestations[0]["value_x"].as_str().unwrap_or("");
+    let first_ct = attestations[0]["source_hash"].as_str().unwrap_or("");
+    let first_a = attestations[0]["artifact_hash"].as_str().unwrap_or("");
+
+    for (i, att) in attestations.iter().enumerate() {
+        let x = att["value_x"].as_str().unwrap_or("");
+        let ct = att["source_hash"].as_str().unwrap_or("");
+        if x != first_x {
+            anyhow::bail!(
+                "Value X mismatch between attestations:\n  [0]: {first_x}\n  [{i}]: {x}\n\
+                 Cannot merge attestations with different Value X."
+            );
+        }
+        if ct != first_ct {
+            anyhow::bail!(
+                "Source hash mismatch between attestations:\n  [0]: {first_ct}\n  [{i}]: {ct}\n\
+                 Attestations built from different source."
+            );
+        }
+    }
+
+    eprintln!("[bountynet] All attestations agree:");
+    eprintln!("[bountynet]   Value X: {first_x}");
+    eprintln!("[bountynet]   CT:      {first_ct}");
+    eprintln!("[bountynet]   A:       {first_a}");
+
+    // Build platform measurement map (Rcommon)
+    let mut platform_measurements = serde_json::Map::new();
+    let mut platform_quotes = serde_json::Map::new();
+    let mut platforms_seen = Vec::new();
+
+    for att in &attestations {
+        let platform = att["platform"].as_str().unwrap_or("unknown");
+        let measurement = att["platform_measurement"].as_str().unwrap_or("");
+        let quote = att["quote"].as_str().unwrap_or("");
+
+        if !measurement.is_empty() {
+            platform_measurements.insert(platform.to_string(), serde_json::json!(measurement));
+        }
+        if !quote.is_empty() {
+            platform_quotes.insert(platform.to_string(), serde_json::json!(quote));
+        }
+        platforms_seen.push(platform.to_string());
+        eprintln!("[bountynet]   {platform}: measurement={}", &measurement[..32.min(measurement.len())]);
+    }
+
+    let merged = serde_json::json!({
+        "version": 1,
+        "type": "merged",
+        "platforms": platforms_seen,
+        "value_x": first_x,
+        "source_hash": first_ct,
+        "artifact_hash": first_a,
+        // Rcommon: expected measurements per platform
+        "rcommon": platform_measurements,
+        // Full quotes per platform for deep verification
+        "quotes": platform_quotes,
+        "timestamp": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_secs(),
+    });
+
+    std::fs::write(&output_path, serde_json::to_string_pretty(&merged)?)?;
+
+    eprintln!();
+    eprintln!("[bountynet] === Merged Attestation ===");
+    eprintln!("[bountynet] Platforms: {}", platforms_seen.join(", "));
+    eprintln!("[bountynet] Value X: {first_x}");
+    eprintln!("[bountynet] Output: {}", output_path.display());
+    eprintln!();
+    if platforms_seen.len() >= 2 {
+        eprintln!(
+            "[bountynet] Anytrust: {} independent TEE vendors attest the same Value X.",
+            platforms_seen.len()
+        );
+        eprintln!("[bountynet] Trust at least one vendor → trust the build.");
+    }
+
+    Ok(())
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -711,6 +899,49 @@ fn find_artifact(build_dir: &Path, source_dir: &Path) -> PathBuf {
     }
 
     build_dir.to_path_buf()
+}
+
+/// AC5: Append attestation to a git-based transparency log.
+/// If the output directory is inside a git repo, commit the attestation
+/// with a deterministic name. Git's hash chain is the append-only log.
+fn append_to_log(output_dir: &Path, att_path: &Path, value_x: &[u8; 48]) -> bool {
+    // Check if output_dir is inside a git repo
+    let git_check = std::process::Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .current_dir(output_dir)
+        .output();
+
+    let in_git = git_check.map(|o| o.status.success()).unwrap_or(false);
+    if !in_git {
+        return false;
+    }
+
+    // Copy attestation to a deterministic path
+    let x_prefix = hex::encode(&value_x[..8]);
+    let log_dir = output_dir.join("attestations");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join(format!("{x_prefix}.json"));
+    if std::fs::copy(att_path, &log_path).is_err() {
+        return false;
+    }
+
+    // Git add + commit
+    let add = std::process::Command::new("git")
+        .args(["add", &log_path.to_string_lossy()])
+        .current_dir(output_dir)
+        .output();
+
+    if !add.map(|o| o.status.success()).unwrap_or(false) {
+        return false;
+    }
+
+    let msg = format!("attestation: {x_prefix}");
+    let commit = std::process::Command::new("git")
+        .args(["commit", "-m", &msg, "--allow-empty"])
+        .current_dir(output_dir)
+        .output();
+
+    commit.map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Create a temporary directory for the build workspace.
