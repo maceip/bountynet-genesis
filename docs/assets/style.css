@@ -32,7 +32,7 @@
   --c-pink:      #ec4899;
   --c-amber:     #f59e0b;
   --c-rule:      #6366f1;
-  --c-shadow:    #2e1065;
+  --c-top:       #f472b6;
   --toggle-bg:   #1a1a24;
 }
 
@@ -64,7 +64,7 @@
   --c-pink:      #db2777;
   --c-amber:     #d97706;
   --c-rule:      #4f46e5;
-  --c-shadow:    #c4b5fd;
+  --c-top:       #be185d;
   --toggle-bg:   #e4e0d8;
 }
 
@@ -155,36 +155,16 @@ a:hover {
   border-radius: 2px;
 }
 
-/* 3D extrusion: two identical text layers, shadow offset behind front */
-.art-3d {
-  position: relative;
-  display: inline-block;
-}
-.art-layer {
+/* 3D block letters: top-face row drawn with ▄ half-blocks, offset 1ch right */
+.art-block {
   font-family: inherit;
   font-size: clamp(0.38rem, 1vw, 0.75rem);
-  line-height: 1.1;
+  line-height: 1.0;
   white-space: pre;
   margin: 0;
   padding: 0;
   user-select: text;
   -webkit-user-select: text;
-}
-.art-shadow {
-  position: absolute;
-  top: 0;
-  left: 0;
-  padding-top: 0.22em;
-  padding-left: 1ch;
-  color: var(--c-shadow);
-  z-index: 0;
-  pointer-events: none;
-  user-select: none;
-  -webkit-user-select: none;
-}
-.art-front {
-  position: relative;
-  z-index: 1;
 }
 .art-sub {
   font-family: inherit;
@@ -203,6 +183,7 @@ a:hover {
 .c-pink   { color: var(--c-pink); }
 .c-amber  { color: var(--c-amber); }
 .c-rule   { color: var(--c-rule); }
+.c-top    { color: var(--c-top); }
 .c-dim    { color: var(--text-dim); letter-spacing: 0.05em; }
 
 /* ===== Zine Info ===== */

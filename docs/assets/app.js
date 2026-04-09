@@ -123,6 +123,11 @@ const ART_W = BOUNTY_ROWS[0].length;
 const NET_PAD = Math.floor((ART_W - NET_ROWS[0].length) / 2);
 const FRONT_COLORS = ['c-purple','c-indigo','c-cyan','c-green','c-pink','c-amber','c-purple'];
 
+// 3D top-face: shift row right by 1, replace \u2588 with \u2584
+function topFace(row) {
+  return ' ' + row.slice(0, -1).replace(/\u2588/g, '\u2584');
+}
+
 
 // ===== Contract ABI =====
 const ATTEST_REGISTRY_ABI = [
@@ -181,25 +186,19 @@ function ThemeToggle({ theme, onToggle }) {
 }
 
 function AsciiHeader() {
+  const padNet = l => ' '.repeat(NET_PAD) + l;
   const allRows = [
-    ...BOUNTY_ROWS,
-    '',
-    ...NET_ROWS.map(l => ' '.repeat(NET_PAD) + l),
+    { text: topFace(BOUNTY_ROWS[0]), cls: 'c-top' },
+    ...BOUNTY_ROWS.map((l, i) => ({ text: l, cls: FRONT_COLORS[i] })),
+    { text: '', cls: '' },
+    { text: topFace(padNet(NET_ROWS[0])), cls: 'c-top' },
+    ...NET_ROWS.map((l, i) => ({ text: padNet(l), cls: FRONT_COLORS[i] })),
   ];
-  const colors = [
-    ...FRONT_COLORS,
-    '',
-    ...FRONT_COLORS,
-  ];
-  const plainText = allRows.join('\n');
 
   return html`<div class="ascii-header">
-    <div class="art-3d">
-      <pre class="art-layer art-shadow" aria-hidden="true">${plainText}</pre>
-      <pre class="art-layer art-front" aria-label="BOUNTY NET">${
-        allRows.map((l, i) => html`<span key=${i} class=${colors[i] || ''}>${l}</span>${'\n'}`)
-      }</pre>
-    </div>
+    <pre class="art-block" aria-label="BOUNTY NET">${
+      allRows.map((l, i) => html`<span key=${i} class=${l.cls}>${l.text}</span>${'\n'}`)
+    }</pre>
     <pre class="art-sub"><span class="c-rule">${'\u2550'.repeat(ART_W)}</span>${'\n'}<span class="c-dim">${center('\u00ab g e n e s i s \u00bb', ART_W)}</span>${'\n'}<span class="c-dim">${center('trust the build \u00b7 verify the machine', ART_W)}</span></pre>
   </div>`;
 }
