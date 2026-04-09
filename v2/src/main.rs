@@ -106,29 +106,71 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
     eprintln!("[bountynet] TEE: {:?}", tee_provider.platform());
 
     // --- Step 2: RATCHET — Lock source hash before building ---
-    // CONSTITUTION: "Source → attested build → artifact → attested runtime.
-    //               If any link is missing, the proof has a gap."
     // Attestable Containers paper: CT is computed and locked before any
-    // untrusted code runs.
+    // untrusted code runs. After this point, the source cannot change.
     eprintln!("[bountynet] Computing source hash (CT)...");
     let ct = compute_tree_hash(&source_dir)?;
     eprintln!("[bountynet] CT = {}", hex::encode(ct));
 
+    // RATCHET: copy source to a read-only snapshot.
+    // The build runs against the snapshot, not the original directory.
+    // This prevents the build process from modifying source after CT was computed.
+    let build_workspace = tempdir()?;
+    let frozen_source = build_workspace.join("src");
+    copy_dir_readonly(&source_dir, &frozen_source)?;
+    eprintln!("[bountynet] Source frozen: {}", frozen_source.display());
+
+    // Verify the frozen copy matches CT (paranoia: catch copy corruption)
+    let ct_verify = compute_tree_hash(&frozen_source)?;
+    if ct != ct_verify {
+        anyhow::bail!(
+            "RATCHET BROKEN: frozen source hash differs from original.\n\
+             original: {}\n\
+             frozen:   {}\n\
+             This should never happen. Aborting.",
+            hex::encode(ct),
+            hex::encode(ct_verify)
+        );
+    }
+
     // --- Step 3: Build ---
-    let cmd = build_cmd.unwrap_or_else(|| detect_build_cmd(&source_dir));
+    // Build runs in the frozen source directory.
+    // Output goes to a writable build directory alongside the frozen source.
+    let build_output = build_workspace.join("build");
+    std::fs::create_dir_all(&build_output)?;
+
+    let cmd = build_cmd.unwrap_or_else(|| detect_build_cmd(&frozen_source));
     eprintln!("[bountynet] Building with: {cmd}");
+
+    // Set CARGO_TARGET_DIR so Rust builds write to the writable output dir.
+    // Other build systems get the output dir via convention.
     let status = std::process::Command::new("sh")
         .arg("-c")
         .arg(&cmd)
-        .current_dir(&source_dir)
+        .current_dir(&frozen_source)
+        .env("CARGO_TARGET_DIR", &build_output)
         .status()?;
     if !status.success() {
         anyhow::bail!("Build failed with exit code: {status}");
     }
 
+    // Re-verify CT after build — the frozen source must not have changed.
+    let ct_post = compute_tree_hash(&frozen_source)?;
+    if ct != ct_post {
+        anyhow::bail!(
+            "RATCHET VIOLATED: source changed during build.\n\
+             pre-build:  {}\n\
+             post-build: {}\n\
+             The build process modified source files. This attestation is invalid.",
+            hex::encode(ct),
+            hex::encode(ct_post)
+        );
+    }
+    eprintln!("[bountynet] Ratchet verified: source unchanged after build");
+
     // --- Step 4: Compute artifact hash ---
     eprintln!("[bountynet] Computing artifact hash (A)...");
-    let artifact_path = find_artifact(&source_dir);
+    let artifact_path = find_artifact(&build_output, &frozen_source);
     let artifact_bytes = std::fs::read(&artifact_path)?;
     let a: [u8; 48] = Sha384::digest(&artifact_bytes).into();
     eprintln!("[bountynet] A = {}", hex::encode(a));
@@ -394,15 +436,15 @@ fn detect_build_cmd(dir: &Path) -> String {
 }
 
 /// Find the primary build artifact.
-fn find_artifact(dir: &Path) -> PathBuf {
-    // Rust
-    let target = dir.join("target/release");
+/// Checks build_dir first (where CARGO_TARGET_DIR points), then source_dir.
+fn find_artifact(build_dir: &Path, source_dir: &Path) -> PathBuf {
+    // Rust: CARGO_TARGET_DIR/release/
+    let target = build_dir.join("release");
     if target.exists() {
         if let Ok(entries) = std::fs::read_dir(&target) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
-                    // Check if it's executable
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
@@ -419,16 +461,62 @@ fn find_artifact(dir: &Path) -> PathBuf {
         }
     }
 
-    // Fallback: look for common output dirs
+    // Fallback: common output dirs in source
     for candidate in ["dist", "build", "out", "bin"] {
-        let p = dir.join(candidate);
+        let p = source_dir.join(candidate);
         if p.exists() {
             return p;
         }
     }
 
-    // Last resort: the directory itself
-    dir.to_path_buf()
+    build_dir.to_path_buf()
+}
+
+/// Create a temporary directory for the build workspace.
+fn tempdir() -> anyhow::Result<PathBuf> {
+    let dir = std::env::temp_dir().join(format!("bountynet-build-{}", std::process::id()));
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)?;
+    }
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// Copy a directory tree and make all files read-only.
+/// This is the enforcement side of the ratchet: the build process
+/// can read source files but cannot modify them.
+fn copy_dir_readonly(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dst)?;
+
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let name = entry.file_name();
+        let name_str = name.to_str().unwrap_or("");
+
+        // Skip .git and build artifacts
+        if matches!(name_str, ".git" | "target" | "node_modules" | ".DS_Store") {
+            continue;
+        }
+
+        if src_path.is_dir() {
+            copy_dir_readonly(&src_path, &dst_path)?;
+        } else if src_path.is_file() {
+            std::fs::copy(&src_path, &dst_path)?;
+            // Make read-only
+            let mut perms = std::fs::metadata(&dst_path)?.permissions();
+            perms.set_readonly(true);
+            std::fs::set_permissions(&dst_path, perms)?;
+        }
+    }
+
+    // Make the directory itself read-only
+    let mut dir_perms = std::fs::metadata(dst)?.permissions();
+    dir_perms.set_readonly(true);
+    std::fs::set_permissions(dst, dir_perms)?;
+
+    Ok(())
 }
 
 /// Check that the TEE quote's report_data contains our binding hash.
