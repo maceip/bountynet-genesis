@@ -387,6 +387,16 @@ fn verify_nitro_quote(
 
         // Verify root cert (cab[0]) is self-signed
         verify_cert_chain_p384_nitro(&cab[0], &cab[0])?;
+
+        // Pin root CA fingerprint
+        if !super::roots::verify_root_fingerprint(
+            &cab[0],
+            super::roots::AWS_NITRO_ROOT_SHA256,
+        ) {
+            return Err(VerifyError::PlatformError(
+                "Nitro: root CA fingerprint does not match pinned AWS Nitro Root CA".into(),
+            ));
+        }
     }
 
     // Sort PCRs by index
@@ -574,6 +584,18 @@ fn verify_snp_quote(
             // Verify VCEK → ASK → ARK chain if available
             if let (Some(ref ask), Some(ref ark)) = (&ask_der, &ark_der) {
                 verify_cert_chain_p384(ark, ark)?; // ARK is self-signed
+                // Pin AMD root fingerprint
+                let version = u32::from_le_bytes(raw_quote[0..4].try_into().expect("version bytes"));
+                let expected_fp = if version >= 5 {
+                    super::roots::AMD_ARK_GENOA_SHA256
+                } else {
+                    super::roots::AMD_ARK_MILAN_SHA256
+                };
+                if !super::roots::verify_root_fingerprint(ark, expected_fp) {
+                    return Err(VerifyError::PlatformError(
+                        "SNP: ARK fingerprint does not match pinned AMD root".into(),
+                    ));
+                }
                 verify_cert_chain_p384(ark, ask)?; // ARK signed ASK
                 verify_cert_chain_p384(ask, vcek)?; // ASK signed VCEK
             }
@@ -889,6 +911,16 @@ fn verify_tdx_quote(
                             if chain_ok {
                                 chain_ok =
                                     verify_cert_chain_p256(root_der, root_der).is_ok();
+                            }
+                            // Pin Intel SGX Root CA fingerprint
+                            if chain_ok {
+                                chain_ok = super::roots::verify_root_fingerprint(
+                                    root_der,
+                                    super::roots::INTEL_SGX_ROOT_SHA256,
+                                );
+                                if !chain_ok {
+                                    eprintln!("[bountynet/verify] TDX: Intel root CA fingerprint mismatch");
+                                }
                             }
                             chain_verified = chain_ok;
                         }

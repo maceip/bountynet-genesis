@@ -129,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
 
     let attest_state = Arc::new(attest::AttestState::new(
         initial_quote,
-        Box::new(move || {
+        Box::new(move |challenge_nonce: Option<[u8; 32]>| {
             let provider = tee_provider_ref
                 .as_ref()
                 .ok_or_else(|| "no TEE available".to_string())?;
@@ -147,7 +147,10 @@ async fn main() -> anyhow::Result<()> {
                 .collect_evidence(&rd)
                 .map_err(|e| e.to_string())?;
 
-            let nonce: [u8; 32] = rand::random();
+            // Use verifier's challenge nonce if provided, otherwise generate one.
+            // A verifier-provided nonce proves freshness (challenge-response).
+            // A self-generated nonce only prevents replay across different verifiers.
+            let nonce = challenge_nonce.unwrap_or_else(|| rand::random());
             Ok(UnifiedQuote::new(
                 evidence.platform,
                 value_x_clone,

@@ -8,9 +8,10 @@
 use sha2::{Digest, Sha256};
 
 /// AWS Nitro Attestation Root CA fingerprint (SHA-256 of DER-encoded cert).
-/// Source: https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip
+/// Computed from the root cert in a real Nitro attestation document's cabundle.
+/// This is the first cert in the cabundle (closest to root).
 pub const AWS_NITRO_ROOT_SHA256: &str =
-    "8cf60e2b2efca96c6a9e71e851d00c1b6f001d714de2d0f5eb46b4c8f8454f18";
+    "641a0321a3e244efe456463195d606317ed7cdcc3c1756e09893f3c68f79bb5b";
 
 /// AMD ARK (Root Key) fingerprint for Milan (SEV-SNP v2).
 /// Source: https://kdsintf.amd.com/vcek/v1/Milan/cert_chain
@@ -23,9 +24,9 @@ pub const AMD_ARK_GENOA_SHA256: &str =
     "5a600e367c89b26e7db78ce18e0aa94bdd67e0e80f74b9f5173e4e91ead34141";
 
 /// Intel SGX Root CA fingerprint (SHA-256 of DER-encoded cert).
-/// Source: Intel SGX Attestation Service documentation.
+/// Computed from the root cert in a real TDX quote's embedded cert chain.
 pub const INTEL_SGX_ROOT_SHA256: &str =
-    "0e0c87d569c58699d59a0fb080b090842e2546e6fd50f61d34836dd46e1e34e0";
+    "44a0196b2b99f889b8e149e95b807a350e7424964399e885a7cbb8ccfab674d3";
 
 /// Check if a DER-encoded certificate matches a pinned fingerprint.
 pub fn verify_root_fingerprint(cert_der: &[u8], expected_fingerprint: &str) -> bool {
