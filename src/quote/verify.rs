@@ -452,13 +452,14 @@ fn verify_snp_quote(
     use p384::ecdsa::{self, signature::hazmat::PrehashVerifier};
     use sha2::Sha384;
 
-    // Minimum: 0x2A0 (672) for signed data + some signature bytes
-    // Full report with sig field: 0x4A0 (1184) bytes
-    // With cert table: larger
-    if raw_quote.len() < 0x2A0 {
+    // Require enough bytes to read the signature (r at 0x2A0..0x2D0, s at 0x2E8..0x318).
+    // Full SNP report is 1184 bytes (0x4A0), but captured reports may be 1152 (0x480)
+    // if the 32-byte response header was stripped. Either way, we need at least 0x318
+    // to read the complete ECDSA-P384 signature.
+    if raw_quote.len() < 0x318 {
         return Err(VerifyError::PlatformError(format!(
-            "SNP report too short: {} bytes (need >= 672)",
-            raw_quote.len()
+            "SNP report too short for signature verification: {} bytes (need >= {})",
+            raw_quote.len(), 0x318
         )));
     }
 
@@ -487,16 +488,14 @@ fn verify_snp_quote(
     let host_data = raw_quote[0x0C0..0x0E0].to_vec();
 
     // --- ECDSA-P384 signature verification ---
-    // Only possible if we have the full report with signature field (>= 0x4A0 bytes)
     let mut sig_verified = false;
-
-    if raw_quote.len() >= 0x4A0 {
+    {
         let signed_data = &raw_quote[0x000..0x2A0];
 
-        // Signature at 0x2A0: r (48 bytes) + 24 padding + s (48 bytes) + 24 padding
-        let sig_field = &raw_quote[0x2A0..0x2A0 + 512];
-        let r = &sig_field[0..48];
-        let s = &sig_field[72..120];
+        // Signature at 0x2A0: r (48 bytes) at +0, s (48 bytes) at +72
+        // Each component is 48 bytes with 24 bytes padding after
+        let r = &raw_quote[0x2A0..0x2D0];
+        let s = &raw_quote[0x2E8..0x318];
         let mut sig_bytes = Vec::with_capacity(96);
         sig_bytes.extend_from_slice(r);
         sig_bytes.extend_from_slice(s);
@@ -511,7 +510,11 @@ fn verify_snp_quote(
         let mut ask_der: Option<Vec<u8>> = None;
         let mut ark_der: Option<Vec<u8>> = None;
 
+        // Cert table may be appended after the report (1152 or 1184 bytes)
         if raw_quote.len() > 0x4A0 {
+            parse_snp_cert_table(raw_quote, &mut vcek_der, &mut ask_der, &mut ark_der);
+        } else if raw_quote.len() > 0x480 {
+            // Report may be 1152 bytes (stripped header), cert table follows
             parse_snp_cert_table(raw_quote, &mut vcek_der, &mut ask_der, &mut ark_der);
         }
 
@@ -543,9 +546,9 @@ fn verify_snp_quote(
                 verify_cert_chain_p384(ask, vcek)?; // ASK signed VCEK
             }
         }
-        // If no VCEK available, sig_verified stays false — pubkey binding still checked
+        // If no VCEK available, sig_verified stays false
+        // Signature field is present but we can't verify without the VCEK cert
     }
-    // If report too short for signature field, sig_verified stays false
 
     let mut measurements = vec![
         ("MEASUREMENT".to_string(), measurement),
@@ -557,16 +560,15 @@ fn verify_snp_quote(
         ),
     ];
 
-    if raw_quote.len() > 0x4A0 {
+    if raw_quote.len() > 0x4A0 || raw_quote.len() > 0x480 {
         measurements.push(("HAS_CERT_TABLE".to_string(), vec![1]));
     }
 
-    // Return true if pubkey binding passed. Signature verification is
-    // best-effort when VCEK certs are available; without certs the
-    // pubkey binding is the primary trust signal (caller can check
-    // SIG_VERIFIED in measurements).
-    let pubkey_bound = true; // already checked above (would have returned Err)
-    Ok((pubkey_bound && (sig_verified || raw_quote.len() < 0x4A0), measurements))
+    // platform_valid reflects actual crypto verification status.
+    // If VCEK certs weren't available, sig_verified=false and the caller
+    // sees platform_valid=false + SIG_VERIFIED=0 in measurements.
+    // Pubkey binding was already checked above (would have returned Err).
+    Ok((sig_verified, measurements))
 }
 
 /// Parse the SNP_GET_EXT_REPORT certificate table.

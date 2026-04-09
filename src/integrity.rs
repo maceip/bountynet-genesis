@@ -114,33 +114,27 @@ pub fn start_integrity_monitor(
     status
 }
 
-/// Extend RTMR2 with a hash of the changed Value X.
+/// Attempt to extend RTMR2 with a hash of the changed Value X.
 ///
-/// On TDX with configfs-tsm, this is done by writing to a special
-/// extend interface. The extension is one-way — the RTMR value
-/// changes irreversibly, making the modification visible to verifiers.
+/// STATUS: NOT YET FUNCTIONAL — logs the intent but cannot actually extend.
+///
+/// On TDX, RTMR extension requires TDG.MR.RTMR.EXTEND TDCALL, which is
+/// not exposed via configfs-tsm as of Linux 6.17. No userspace interface
+/// exists yet. When available, this will write to a kernel interface.
+///
+/// Current defense: the `integrity_ok=false` flag in the EAT token signals
+/// tampering to verifiers. This is a software-level signal, not a
+/// hardware-level measurement change.
 fn extend_rtmr2(new_value_x: &[u8; 48]) -> Result<(), String> {
-    // configfs-tsm doesn't directly expose RTMR extension.
-    // On TDX, RTMR extension is done via TDG.MR.RTMR.EXTEND TDCALL.
-    // From userspace, this requires either:
-    //   1. A kernel interface (not yet standardized)
-    //   2. A custom driver
-    //
-    // For now, we log the event and include the integrity status
-    // in the attestation response so verifiers can see it.
-    // The integrity_ok=false flag in the quote response is the signal.
-    //
-    // When kernel RTMR extension is available, this will be:
-    //   fs::write("/sys/kernel/config/tsm/rtmr/2/extend", hash_bytes)
     let hash = Sha256::digest(new_value_x);
     eprintln!(
-        "[bountynet/integrity] Would extend RTMR2 with: {}",
+        "[bountynet/integrity] RTMR2 extension NOT AVAILABLE (no kernel interface). \
+         Tamper hash: {}. Defense: integrity_ok=false in EAT token.",
         hex::encode(hash)
     );
-
-    // TODO: actual RTMR extension when kernel support is available
-    // For now, return Ok — the integrity status flag is the defense
-    Ok(())
+    // Return Err to signal that RTMR was NOT actually extended.
+    // The caller should rely on integrity_ok flag instead.
+    Err("RTMR extension not available — no kernel interface for TDG.MR.RTMR.EXTEND".into())
 }
 
 /// Generate a heartbeat quote — a fresh attestation on a timer.
@@ -174,6 +168,6 @@ pub fn start_heartbeat(
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system clock before unix epoch")
         .as_secs()
 }

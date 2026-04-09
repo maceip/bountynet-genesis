@@ -1,7 +1,10 @@
 //! Integration test: Real Nitro attestation document → UnifiedQuote → Verify
 //!
 //! This test uses a real attestation document captured from a Nitro Enclave
-//! on 2026-04-06 to prove the end-to-end harmonized flow works:
+//! on 2026-04-06 to prove the end-to-end harmonized flow works.
+//!
+//! SECURITY NOTE: signing_key in testdata is TEST-ONLY (pubkey hash baked into
+//! the Nitro doc's user_data during capture). No security value.
 //!
 //! 1. Parse raw Nitro COSE_Sign1 attestation doc
 //! 2. Wrap it in a UnifiedQuote with Value X

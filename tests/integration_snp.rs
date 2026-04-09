@@ -2,6 +2,11 @@
 //!
 //! Uses a real attestation report captured from an AMD EPYC 7R13 (c6a.large)
 //! running SEV-SNP on AWS EC2 in us-east-2, 2026-04-06.
+//!
+//! SECURITY NOTE: The signing_key in testdata is a TEST-ONLY ed25519 key whose
+//! pubkey hash was baked into the SNP report's REPORT_DATA during capture.
+//! It has no security value — the platform quote itself is public. The key
+//! exists solely so UnifiedQuote signature verification works in tests.
 
 use bountynet_shim::quote::verify::verify_unified_quote;
 use bountynet_shim::quote::{Platform, UnifiedQuote};
@@ -39,20 +44,33 @@ fn test_snp_layer2_verification() {
         &signing_key,
     );
 
-    // Full verification
+    // Full verification — our test data has no VCEK cert table,
+    // so signature verification is incomplete (no cert to verify against).
+    // pubkey binding and structural checks pass; crypto sig doesn't.
     let result = verify_unified_quote(&quote, Some(&value_x)).expect("SNP verification should pass");
 
-    assert!(result.signature_valid);
-    assert!(result.platform_valid);
+    assert!(result.signature_valid); // Layer 1: ed25519 over UnifiedQuote
+    // platform_valid = false because we don't have VCEK certs in test data.
+    // This is the CORRECT behavior — we refuse to claim hardware authenticity
+    // without a verified signature chain.
+    assert!(!result.platform_valid, "should be false without VCEK certs");
     assert_eq!(result.platform, Platform::SevSnp);
     assert_eq!(result.value_x, value_x);
+
+    // Verify that SIG_VERIFIED measurement reflects the actual state
+    let sig_verified = result.measurements.iter()
+        .find(|(k, _)| k == "SIG_VERIFIED")
+        .map(|(_, v)| v[0])
+        .unwrap_or(0);
+    assert_eq!(sig_verified, 0, "sig should not be verified without VCEK");
 
     println!("=== AMD SEV-SNP LAYER 2 VERIFICATION ===");
     for (name, value) in &result.measurements {
         println!("  {}: {}", name, hex::encode(value));
     }
-    println!("  Platform valid: {}", result.platform_valid);
-    println!("=== VERIFIED ===");
+    println!("  Platform valid: {} (expected false without VCEK)", result.platform_valid);
+    println!("  Note: pubkey binding verified, signature verification requires VCEK cert");
+    println!("=== STRUCTURAL CHECK PASSED ===");
 }
 
 #[test]
@@ -81,11 +99,13 @@ fn test_snp_and_nitro_same_value_x() {
     assert_eq!(q_snp.value_x, q_nitro.value_x);
     assert_eq!(q_snp.value_x, value_x);
 
-    // Both verify
+    // Both pass structural verification
     let r_snp = verify_unified_quote(&q_snp, Some(&value_x)).expect("SNP verify");
     let r_nitro = verify_unified_quote(&q_nitro, Some(&value_x)).expect("Nitro verify");
 
-    assert!(r_snp.platform_valid);
+    // SNP: no VCEK certs in test data, so platform_valid=false
+    assert!(!r_snp.platform_valid, "SNP needs VCEK for full verification");
+    // Nitro: COSE signature + cert chain verified
     assert!(r_nitro.platform_valid);
 
     // Different platforms, same X

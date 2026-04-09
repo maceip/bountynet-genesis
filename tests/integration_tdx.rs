@@ -2,6 +2,9 @@
 //!
 //! Uses a real TDX quote captured from a GCP c3-standard-4 Confidential VM
 //! (Intel Sapphire Rapids) in us-central1-a via configfs-tsm, 2026-04-08.
+//!
+//! SECURITY NOTE: signing_key in testdata is TEST-ONLY (pubkey hash baked into
+//! the TDX quote's REPORTDATA during capture). No security value.
 
 use bountynet_shim::quote::verify::verify_unified_quote;
 use bountynet_shim::quote::{Platform, UnifiedQuote};
@@ -92,14 +95,14 @@ fn test_all_three_platforms_same_value_x() {
     assert_eq!(q_snp.value_x, q_nitro.value_x);
     assert_eq!(q_tdx.value_x, value_x);
 
-    // All three verify
+    // All three pass verification (structural + crypto where certs available)
     let r_tdx = verify_unified_quote(&q_tdx, Some(&value_x)).expect("TDX verify");
     let r_snp = verify_unified_quote(&q_snp, Some(&value_x)).expect("SNP verify");
     let r_nitro = verify_unified_quote(&q_nitro, Some(&value_x)).expect("Nitro verify");
 
-    assert!(r_tdx.platform_valid);
-    assert!(r_snp.platform_valid);
-    assert!(r_nitro.platform_valid);
+    assert!(r_tdx.platform_valid);   // TDX: full DCAP chain verified
+    assert!(!r_snp.platform_valid);  // SNP: no VCEK certs in test data
+    assert!(r_nitro.platform_valid); // Nitro: COSE + cert chain verified
 
     // Different platforms, same X
     assert_eq!(r_tdx.platform, Platform::Tdx);
@@ -117,7 +120,7 @@ fn test_all_three_platforms_same_value_x() {
     println!("SNP quote hash:   {}", hex::encode(q_snp.platform_quote_hash));
     println!("Nitro quote hash: {}", hex::encode(q_nitro.platform_quote_hash));
     println!(
-        "All Layer 2 verified: TDX={}, SNP={}, Nitro={}",
+        "Layer 2: TDX={} (full DCAP), SNP={} (no VCEK), Nitro={} (full COSE)",
         r_tdx.platform_valid, r_snp.platform_valid, r_nitro.platform_valid
     );
     println!("=== THE ONE RING ===");

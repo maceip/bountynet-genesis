@@ -141,7 +141,7 @@ async fn get_compact_quote(
 
     let guard = state.current_quote.read().await;
     match guard.as_ref() {
-        Some(q) => Ok(Json(serde_json::to_value(q.compact()).unwrap())),
+        Some(q) => Ok(Json(serde_json::to_value(q.compact()).expect("UnifiedQuote serialization"))),
         None => Err((
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ErrorResponse {
@@ -179,7 +179,7 @@ async fn get_full_quote(
         *guard = Some(quote.clone());
     }
 
-    Ok(Json(serde_json::to_value(quote).unwrap()))
+    Ok(Json(serde_json::to_value(quote).expect("UnifiedQuote serialization")))
 }
 
 async fn get_value_x(
