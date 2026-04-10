@@ -50,7 +50,7 @@ can verify the proof without trusting the operator.
 | GCP TDX | Google | Intel TDX | Google signed endorsement (MRTD). RTMR[1-3] cover our code, verifiable from source. | RTMR[1-2] cover kernel | **Ready** |
 | Azure SNP | Microsoft | AMD SEV-SNP | Custom OVMF via IGVM, reproducible from source | Full control — MEASUREMENT covers everything | **Next** |
 | Azure TDX | Microsoft | Intel TDX | Custom firmware, reproducible from source | Full control | **Next** |
-| AWS SNP | Amazon | AMD SEV-SNP | Published source does not match production firmware. `SNP_KERNEL_HASHES` not enabled. Issues filed: [aws/uefi#19](https://github.com/aws/uefi/issues/19), [aws/uefi#20](https://github.com/aws/uefi/issues/20) | Kernel not in MEASUREMENT | **Blocked** |
+| AWS SNP | Amazon | AMD SEV-SNP | Published source does not match production firmware ([aws/uefi#19](https://github.com/aws/uefi/issues/19)). Kernel measurement via NitroTPM (see below). | Kernel via NitroTPM, not SNP MEASUREMENT | **Ready** (with NitroTPM) |
 | Equinix Metal | Equinix | AMD SEV-SNP (bare metal) | Full BIOS control via IPMI. Run your own hypervisor + OVMF. | Full control | Not tested |
 | Hetzner | Hetzner | None | BIOS locked, no SNP/TDX exposed | N/A | Not available |
 | OVH | OVHcloud | None | BIOS locked, no SNP/TDX | N/A | Not available |
@@ -60,6 +60,63 @@ can verify the proof without trusting the operator.
 | DigitalOcean | DigitalOcean | None | No TEE support | N/A | Not available |
 | IBM Cloud | IBM | SGX (x86), Secure Execution (s390x) | SGX bare metal only, no TDX/SNP | N/A | Not viable for our use |
 | STACKIT | Schwarz Group | None GA | CCC member, no public product | N/A | Not available |
+
+## AWS SNP + NitroTPM: Kernel Measurement Path
+
+On EC2, the SNP MEASUREMENT only covers the OVMF firmware. The kernel,
+initrd, and cmdline are measured by the NitroTPM (a virtual TPM in the
+Nitro hypervisor), not by the AMD PSP. There is no `SNP_KERNEL_HASHES`
+support — EC2 does not use direct kernel boot.
+
+We link the two by having stage 0 (running inside the SNP VM) read
+the NitroTPM's Endorsement Key and TPM PCR values, then bind them
+into the SNP report:
+
+1. Stage 0 boots inside SNP VM with NitroTPM enabled
+2. Stage 0 reads TPM PCRs (kernel measurements) from `/dev/tpm0`
+3. Stage 0 reads the NitroTPM Endorsement Key (EK) via EC2 API
+4. Stage 0 requests a TPM quote over PCRs with a fresh nonce
+5. Stage 0 puts `sha256(PCR values)` into SNP REPORT_DATA
+6. Stage 0 collects the SNP report (AMD PSP signs it)
+7. Attestation output includes: SNP report + EK + TPM quote + PCRs
+
+Verification:
+- SNP report is genuine → AMD root CA (hardware trust)
+- REPORT_DATA contains PCR hash → stage 0 code bound them
+- Stage 0 code is verified via SNP MEASUREMENT → it's open source
+- TPM quote verifies against EK → PCRs are what the TPM measured
+- PCR hash in SNP report matches PCRs in TPM quote → linked
+
+**Trust assumptions:**
+
+| What | Trusted by |
+|------|-----------|
+| SNP report is genuine | AMD hardware (PSP) |
+| Stage 0 code is unmodified | SNP MEASUREMENT (verifiable from source) |
+| NitroTPM PCR values are accurate | AWS (NitroTPM is a virtual TPM controlled by the Nitro hypervisor) |
+| EK is genuine | Stage 0 read it from inside the attested TEE — the code is verified, so the data it reports is what it saw |
+
+This is the same trust model as GCP TDX, where we trust Google for
+the firmware endorsement but verify our own code independently. On
+AWS SNP, we trust AMD for the hardware and AWS for the virtual TPM.
+
+**Verified on real hardware:** c6a.xlarge, us-east-2, Ubuntu 24.04,
+`AmdSevSnp=enabled` + NitroTPM v2.0. Both `/dev/sev-guest` and
+`/dev/tpm0` present. SNP report and TPM quote obtained simultaneously.
+PCR hash successfully bound into SNP REPORT_DATA.
+
+## Trust Assumptions Per Platform
+
+| Platform | Hardware trust | Cloud provider trust | What provider is trusted for |
+|----------|---------------|---------------------|----------------------------|
+| AWS Nitro | Amazon (NSM chip) | None | — |
+| AWS SNP | AMD (PSP) | AWS | NitroTPM kernel measurement |
+| GCP TDX | Intel (TDX Module) | Google | Firmware endorsement (MRTD) |
+| Azure SNP/TDX | AMD/Intel | None | — (custom OVMF via IGVM) |
+
+AWS Nitro and Azure require no cloud provider trust. AWS SNP and GCP
+TDX require trusting the provider for one component. This is documented,
+not hidden.
 
 ## Stage 1: The Attested Runtime
 
@@ -81,6 +138,6 @@ The runtime platform provides the execution trust.
 | GCP TDX | Google endorsement (MRTD) | RTMR[1-3] from source |
 | Azure SNP | Our OVMF via IGVM (MEASUREMENT from source) | Included in MEASUREMENT |
 | Azure TDX | Our OVMF (MRTD from source) | RTMR[1-3] from source |
-| AWS SNP | Published source stale | Not in MEASUREMENT |
+| AWS SNP | SNP MEASUREMENT (firmware) + NitroTPM (kernel) | PCRs via NitroTPM, linked to SNP report |
 | AWS Nitro | .eif reproducible | PCR0 covers everything |
 | Equinix Metal | Full control | Full control |
