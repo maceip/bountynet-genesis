@@ -221,7 +221,7 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
     // CONSTITUTION: "Value X is a single number that represents 'this exact software.'"
     // LATTE: application layer identity, deterministic across platforms.
     eprintln!("[bountynet] Computing Value X...");
-    let value_x = compute_tree_hash(&source_dir)?;
+    let value_x = compute_tree_hash(&frozen_source)?;
     eprintln!("[bountynet] X = {}", hex::encode(value_x));
 
     // --- Step 6: Collect TEE quote ---
