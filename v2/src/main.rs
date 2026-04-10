@@ -30,6 +30,7 @@
 //!   4. Optionally verifies CT against a git repo
 //!   5. Optionally verifies A against a local artifact
 
+mod net;
 mod quote;
 mod tee;
 
