@@ -22,6 +22,8 @@ pub struct TlsState {
 impl TlsState {
     /// Create with a self-signed cert (for ACME challenge phase).
     pub fn new_self_signed(domain: &str) -> Result<Self> {
+        // Install ring crypto provider for rustls
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
         let params = rcgen::CertificateParams::new(vec![domain.to_string()])?;
         let cert = params.self_signed(&key_pair)?;
