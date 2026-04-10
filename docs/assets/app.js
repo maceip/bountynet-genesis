@@ -43,89 +43,228 @@ function dotfill(left, right, w) {
   return left + ' ' + '.'.repeat(Math.max(3, dots)) + ' ' + right;
 }
 
-// ===== ASCII Art — 3D extruded block letters =====
-// Front face rendered with per-line rainbow striping.
-// Shadow layer (same text, CSS-offset) creates the depth extrusion.
-const L = {
-  B: [
-    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ',
-    '\u2588\u2588     \u2588\u2588 ',
-    '\u2588\u2588     \u2588\u2588 ',
-    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ',
-    '\u2588\u2588     \u2588\u2588 ',
-    '\u2588\u2588     \u2588\u2588 ',
-    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ',
-  ],
-  O: [
-    ' \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ',
-    '\u2588\u2588      \u2588\u2588',
-    '\u2588\u2588      \u2588\u2588',
-    '\u2588\u2588      \u2588\u2588',
-    '\u2588\u2588      \u2588\u2588',
-    '\u2588\u2588      \u2588\u2588',
-    ' \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ',
-  ],
-  U: [
-    '\u2588\u2588      \u2588\u2588',
-    '\u2588\u2588      \u2588\u2588',
-    '\u2588\u2588      \u2588\u2588',
-    '\u2588\u2588      \u2588\u2588',
-    '\u2588\u2588      \u2588\u2588',
-    '\u2588\u2588      \u2588\u2588',
-    ' \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 ',
-  ],
-  N: [
-    '\u2588\u2588\u2588     \u2588\u2588',
-    '\u2588\u2588\u2588\u2588    \u2588\u2588',
-    '\u2588\u2588 \u2588\u2588   \u2588\u2588',
-    '\u2588\u2588  \u2588\u2588  \u2588\u2588',
-    '\u2588\u2588   \u2588\u2588 \u2588\u2588',
-    '\u2588\u2588    \u2588\u2588\u2588\u2588',
-    '\u2588\u2588     \u2588\u2588\u2588',
-  ],
-  T: [
-    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588',
-    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588',
-    '    \u2588\u2588    ',
-    '    \u2588\u2588    ',
-    '    \u2588\u2588    ',
-    '    \u2588\u2588    ',
-    '    \u2588\u2588    ',
-  ],
-  Y: [
-    '\u2588\u2588      \u2588\u2588',
-    ' \u2588\u2588    \u2588\u2588 ',
-    '  \u2588\u2588  \u2588\u2588  ',
-    '   \u2588\u2588\u2588\u2588   ',
-    '    \u2588\u2588    ',
-    '    \u2588\u2588    ',
-    '    \u2588\u2588    ',
-  ],
-  E: [
-    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588',
-    '\u2588\u2588        ',
-    '\u2588\u2588        ',
-    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588   ',
-    '\u2588\u2588        ',
-    '\u2588\u2588        ',
-    '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588',
-  ],
-};
+// ===== 3D Balloon Text (Three.js) =====
+let threeLoaded = false;
+async function initBalloonText(canvas, isDark) {
+  if (!canvas) return;
+  const THREE = await import('three');
+  const { FontLoader } = await import('three/addons/loaders/FontLoader.js');
+  const { TextGeometry } = await import('three/addons/geometries/TextGeometry.js');
+  threeLoaded = true;
 
-function composeWord(chars, gap) {
-  const letters = chars.map(c => L[c]);
-  return letters[0].map((_, r) => letters.map(l => l[r]).join(gap));
-}
+  const W = canvas.clientWidth || 800;
+  const H = canvas.clientHeight || 400;
+  const dpr = Math.min(window.devicePixelRatio, 2);
 
-const BOUNTY_ROWS = composeWord(['B','O','U','N','T','Y'], '  ');
-const NET_ROWS = composeWord(['N','E','T'], '  ');
-const ART_W = BOUNTY_ROWS[0].length;
-const NET_PAD = Math.floor((ART_W - NET_ROWS[0].length) / 2);
-const FRONT_COLORS = ['c-purple','c-indigo','c-cyan','c-green','c-pink','c-amber','c-purple'];
+  const scene = new THREE.Scene();
+  scene.background = null; // transparent
 
-// 3D top-face: shift row right by 1, replace \u2588 with \u2584
-function topFace(row) {
-  return ' ' + row.slice(0, -1).replace(/\u2588/g, '\u2584');
+  const camera = new THREE.PerspectiveCamera(40, W / H, 0.1, 100);
+  camera.position.set(0, 1, 18);
+
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setSize(W, H);
+  renderer.setPixelRatio(dpr);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.2;
+
+  // Lights — soft environment for glossy balloon look
+  const ambLight = new THREE.AmbientLight(0xffffff, 0.4);
+  scene.add(ambLight);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 1.8);
+  dirLight.position.set(5, 8, 10);
+  scene.add(dirLight);
+  const rimLight = new THREE.DirectionalLight(0x8888ff, 0.6);
+  rimLight.position.set(-5, 3, -5);
+  scene.add(rimLight);
+  const bottomFill = new THREE.DirectionalLight(0xffffff, 0.3);
+  bottomFill.position.set(0, -5, 5);
+  scene.add(bottomFill);
+
+  // Balloon material — inflated, glossy, slightly translucent
+  function balloonMat(color) {
+    return new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color(color),
+      metalness: 0.0,
+      roughness: 0.25,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.1,
+      reflectivity: 0.9,
+      sheen: 0.5,
+      sheenColor: new THREE.Color(0xffffff),
+      sheenRoughness: 0.3,
+      thickness: 2.0,
+      transmission: 0.05,
+      ior: 1.4,
+      envMapIntensity: 1.0,
+    });
+  }
+
+  // Env map — procedural gradient for reflections
+  const pmremGen = new THREE.PMREMGenerator(renderer);
+  const envScene = new THREE.Scene();
+  const envGeo = new THREE.SphereGeometry(50, 32, 32);
+  const envMat = new THREE.MeshBasicMaterial({ side: THREE.BackSide });
+  envMat.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      'vec4 diffuseColor = vec4( diffuse, opacity );',
+      `vec3 vDir = normalize(vViewPosition);
+       float t = vDir.y * 0.5 + 0.5;
+       vec3 skyTop = vec3(0.6, 0.7, 1.0);
+       vec3 skyBot = vec3(0.95, 0.95, 1.0);
+       vec4 diffuseColor = vec4(mix(skyBot, skyTop, t), opacity);`
+    );
+  };
+  envScene.add(new THREE.Mesh(envGeo, envMat));
+  const envMap = pmremGen.fromScene(envScene, 0.04).texture;
+  scene.environment = envMap;
+  envScene.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+  envMat.dispose();
+  pmremGen.dispose();
+
+  // Colors — one per letter, bright balloon palette
+  const COLORS_BOUNTY = ['#ff4488', '#ff6644', '#ffaa22', '#44cc44', '#22aaff', '#aa66ff'];
+  const COLORS_NET = ['#ff4488', '#22aaff', '#44cc44'];
+
+  // Load font & build text
+  const loader = new FontLoader();
+  const fontUrl = 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/fonts/droid/droid_sans_bold.typeface.json';
+  const font = await new Promise((res, rej) => loader.load(fontUrl, res, undefined, rej));
+
+  function makeWord(text, colors, yOff) {
+    const group = new THREE.Group();
+    const SIZE = 2.0;
+    const DEPTH = 1.2;
+    const BEVEL = 0.35;
+    const meshes = [];
+
+    // Measure total width first
+    let totalW = 0;
+    const charWidths = [];
+    for (const ch of text) {
+      const tmpGeo = new TextGeometry(ch, {
+        font, size: SIZE, depth: 0.01,
+        curveSegments: 1, bevelEnabled: false,
+      });
+      tmpGeo.computeBoundingBox();
+      const w = tmpGeo.boundingBox.max.x - tmpGeo.boundingBox.min.x;
+      charWidths.push(w);
+      totalW += w + 0.3; // kerning
+      tmpGeo.dispose();
+    }
+    totalW -= 0.3; // remove last kern
+
+    let xOff = -totalW / 2;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === ' ') { xOff += SIZE * 0.4; continue; }
+      const geo = new TextGeometry(ch, {
+        font, size: SIZE, depth: DEPTH,
+        curveSegments: 12,
+        bevelEnabled: true,
+        bevelThickness: BEVEL,
+        bevelSize: BEVEL,
+        bevelOffset: 0,
+        bevelSegments: 8,
+      });
+      geo.computeBoundingBox();
+      const mat = balloonMat(colors[i % colors.length]);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(xOff, yOff, 0);
+      mesh.userData = { baseY: yOff, phase: Math.random() * Math.PI * 2 };
+      group.add(mesh);
+      meshes.push(mesh);
+      xOff += charWidths[i] + 0.3;
+    }
+    return { group, meshes };
+  }
+
+  const bounty = makeWord('BOUNTY', COLORS_BOUNTY, 1.8);
+  const net = makeWord('NET', COLORS_NET, -1.8);
+  scene.add(bounty.group);
+  scene.add(net.group);
+
+  const allMeshes = [...bounty.meshes, ...net.meshes];
+
+  // Subtle string lines hanging down from each letter
+  const stringMat = new THREE.LineBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.3 });
+  allMeshes.forEach(m => {
+    m.geometry.computeBoundingBox();
+    const bb = m.geometry.boundingBox;
+    const cx = m.position.x + (bb.max.x + bb.min.x) / 2;
+    const by = m.position.y + bb.min.y;
+    const pts = [new THREE.Vector3(cx, by, 0), new THREE.Vector3(cx + 0.1, by - 3, 0.2)];
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+    const line = new THREE.Line(lineGeo, stringMat);
+    line.userData = { mesh: m, offsetX: cx - m.position.x, offsetY: by - m.position.y };
+    scene.add(line);
+  });
+
+  // Mouse interaction — gentle tilt
+  let mouseX = 0, mouseY = 0;
+  canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    mouseX = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
+    mouseY = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+  });
+
+  // Animate
+  let running = true;
+  function animate() {
+    if (!running) return;
+    requestAnimationFrame(animate);
+    const t = performance.now() * 0.001;
+
+    // Gentle float per letter
+    allMeshes.forEach(m => {
+      m.position.y = m.userData.baseY + Math.sin(t * 0.8 + m.userData.phase) * 0.15;
+      m.rotation.z = Math.sin(t * 0.5 + m.userData.phase) * 0.03;
+    });
+
+    // Update string lines
+    scene.children.forEach(c => {
+      if (c.isLine && c.userData.mesh) {
+        const m = c.userData.mesh;
+        const pos = c.geometry.attributes.position;
+        const topX = m.position.x + c.userData.offsetX;
+        const topY = m.position.y + c.userData.offsetY;
+        pos.setXYZ(0, topX, topY, 0);
+        pos.setXYZ(1, topX + 0.1, topY - 3, 0.2);
+        pos.needsUpdate = true;
+      }
+    });
+
+    // Camera tilt from mouse
+    camera.position.x += (mouseX * 2 - camera.position.x) * 0.05;
+    camera.position.y += (1 - mouseY * 1 - camera.position.y) * 0.05;
+    camera.lookAt(0, 0, 0);
+
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // Resize handler
+  const onResize = () => {
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    if (w && h) {
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    }
+  };
+  window.addEventListener('resize', onResize);
+
+  // Cleanup function
+  return () => {
+    running = false;
+    window.removeEventListener('resize', onResize);
+    renderer.dispose();
+    scene.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) { if (o.material.dispose) o.material.dispose(); }
+    });
+  };
 }
 
 
@@ -185,21 +324,29 @@ function ThemeToggle({ theme, onToggle }) {
   </button>`;
 }
 
-function AsciiHeader() {
-  const padNet = l => ' '.repeat(NET_PAD) + l;
-  const allRows = [
-    { text: topFace(BOUNTY_ROWS[0]), cls: 'c-top' },
-    ...BOUNTY_ROWS.map((l, i) => ({ text: l, cls: FRONT_COLORS[i] })),
-    { text: '', cls: '' },
-    { text: topFace(padNet(NET_ROWS[0])), cls: 'c-top' },
-    ...NET_ROWS.map((l, i) => ({ text: padNet(l), cls: FRONT_COLORS[i] })),
-  ];
+function BalloonHeader({ theme }) {
+  const canvasRef = useRef(null);
+  const cleanupRef = useRef(null);
 
-  return html`<div class="ascii-header">
-    <pre class="art-block" aria-label="BOUNTY NET">${
-      allRows.map((l, i) => html`<span key=${i} class=${l.cls}>${l.text}</span>${'\n'}`)
-    }</pre>
-    <pre class="art-sub"><span class="c-rule">${'\u2550'.repeat(ART_W)}</span>${'\n'}<span class="c-dim">${center('\u00ab g e n e s i s \u00bb', ART_W)}</span>${'\n'}<span class="c-dim">${center('trust the build \u00b7 verify the machine', ART_W)}</span></pre>
+  useEffect(() => {
+    if (cleanupRef.current) cleanupRef.current();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let cancelled = false;
+    initBalloonText(canvas, theme === 'dark').then(cleanup => {
+      if (cancelled) { if (cleanup) cleanup(); return; }
+      cleanupRef.current = cleanup;
+    }).catch(err => console.warn('3D init failed:', err));
+    return () => { cancelled = true; if (cleanupRef.current) cleanupRef.current(); };
+  }, [theme]);
+
+  return html`<div class="balloon-header">
+    <canvas ref=${canvasRef} class="balloon-canvas"></canvas>
+    <div class="balloon-sub">
+      <span class="c-rule">\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550</span>
+      <span class="c-dim">\u00ab g e n e s i s \u00bb</span>
+      <span class="c-dim">trust the build \u00b7 verify the machine</span>
+    </div>
   </div>`;
 }
 
@@ -695,7 +842,7 @@ function App() {
   return html`
     <${ThemeToggle} theme=${theme} onToggle=${toggle} />
     <main class="zine">
-      <${AsciiHeader} />
+      <${BalloonHeader} theme=${theme} />
       <${ZineInfo} />
       <${TableOfContents} />
       <${SectionDivider} num="0x01" title="Introduction" id="intro" />
