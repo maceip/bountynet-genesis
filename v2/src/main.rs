@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
     match args[1].as_str() {
         "build" => cmd_build(&args[2..]),
         "verify" => cmd_verify(&args[2..]),
-        "run" => cmd_run(&args[2..]),
+        "run" => cmd_run(&args[2..]).await,
         "merge" => cmd_merge(&args[2..]),
         _ => {
             print_usage();
@@ -509,7 +509,7 @@ fn cmd_verify(args: &[String]) -> anyhow::Result<()> {
 // RUN — stage 1: self-verify then execute (AC6 + LATTE L2)
 // ============================================================================
 
-fn cmd_run(args: &[String]) -> anyhow::Result<()> {
+async fn cmd_run(args: &[String]) -> anyhow::Result<()> {
     // Parse args
     let mut work_dir: Option<PathBuf> = None;
     let mut attestation_path: Option<PathBuf> = None;
