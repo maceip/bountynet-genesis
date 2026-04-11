@@ -38,8 +38,7 @@ use sha2::{Digest, Sha256, Sha384};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
@@ -50,7 +49,20 @@ async fn main() -> anyhow::Result<()> {
     match args[1].as_str() {
         "build" => cmd_build(&args[2..]),
         "verify" => cmd_verify(&args[2..]),
-        "run" => cmd_run(&args[2..]).await,
+        "run" => {
+            // Only create tokio runtime if we need it (TLS path).
+            // Nitro Enclaves may not support epoll fully.
+            let rt = tokio::runtime::Runtime::new();
+            match rt {
+                Ok(rt) => rt.block_on(cmd_run(&args[2..])),
+                Err(_) => {
+                    // Tokio failed (likely inside a Nitro Enclave).
+                    // Fall back to synchronous vsock-only path.
+                    eprintln!("[bountynet] Async runtime unavailable, using sync mode");
+                    cmd_run_sync(&args[2..])
+                }
+            }
+        }
         "merge" => cmd_merge(&args[2..]),
         _ => {
             print_usage();
@@ -741,6 +753,101 @@ async fn cmd_run(args: &[String]) -> anyhow::Result<()> {
         eprintln!("[bountynet] Press Ctrl+C to stop.");
         tokio::signal::ctrl_c().await?;
     }
+
+    Ok(())
+}
+
+// ============================================================================
+// RUN SYNC — fallback for Nitro Enclaves where tokio doesn't work
+// ============================================================================
+
+fn cmd_run_sync(args: &[String]) -> anyhow::Result<()> {
+    let mut work_dir: Option<PathBuf> = None;
+    let mut attestation_path: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--attestation" => {
+                i += 1;
+                attestation_path = args.get(i).map(|s| PathBuf::from(s));
+            }
+            _ => {
+                if work_dir.is_none() {
+                    work_dir = Some(PathBuf::from(&args[i]));
+                }
+            }
+        }
+        i += 1;
+    }
+
+    let work_dir = work_dir.ok_or_else(|| anyhow::anyhow!("working directory required"))?;
+    let attestation_path = attestation_path
+        .ok_or_else(|| anyhow::anyhow!("--attestation <path> required"))?;
+
+    eprintln!("[bountynet] Stage 1 (sync mode): self-verification");
+    let tee_provider = tee::detect::detect_tee()?;
+    eprintln!("[bountynet] TEE: {:?}", tee_provider.platform());
+
+    // Load and verify attestation
+    let att_contents = std::fs::read_to_string(&attestation_path)?;
+    let att_json: serde_json::Value = serde_json::from_str(&att_contents)?;
+
+    let stage0_x = att_json["value_x"].as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing value_x"))?;
+
+    eprintln!("[bountynet] Stage 0 Value X: {}", &stage0_x[..24]);
+
+    // Re-compute Value X
+    let current_x = compute_tree_hash(&work_dir)?;
+    let current_x_hex = hex::encode(current_x);
+
+    if current_x_hex != stage0_x {
+        eprintln!("[bountynet] FATAL: Value X mismatch");
+        eprintln!("[bountynet]   stage 0: {stage0_x}");
+        eprintln!("[bountynet]   current: {current_x_hex}");
+        std::process::exit(1);
+    }
+    eprintln!("[bountynet] Value X: MATCHES");
+
+    // Collect stage 1 quote
+    let att_hash: [u8; 32] = Sha256::digest(att_contents.as_bytes()).into();
+    let mut binding = Vec::with_capacity(32 + 48);
+    binding.extend_from_slice(&att_hash);
+    binding.extend_from_slice(&current_x);
+    let binding_hash: [u8; 32] = Sha256::digest(&binding).into();
+
+    let mut report_data = [0u8; 64];
+    report_data[..32].copy_from_slice(&binding_hash);
+    report_data[32..64].copy_from_slice(&current_x[..32]);
+
+    let evidence = tee_provider.collect_evidence(&report_data)?;
+    eprintln!("[bountynet] Stage 1 quote: {} bytes", evidence.raw_quote.len());
+
+    // Build attestation JSON
+    let s1_attestation = serde_json::json!({
+        "version": 1,
+        "stage": 1,
+        "platform": format!("{:?}", evidence.platform),
+        "value_x": current_x_hex,
+        "stage0_attestation_hash": hex::encode(att_hash),
+        "binding": hex::encode(binding_hash),
+        "quote": hex::encode(&evidence.raw_quote),
+        "timestamp": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_secs(),
+    });
+
+    let attestation_json = serde_json::to_string_pretty(&s1_attestation)?;
+    eprintln!("[bountynet] === Stage 1 Verified (sync) ===");
+    eprintln!("[bountynet] Value X: {current_x_hex}");
+
+    // Serve via vsock (blocking)
+    let domain = net::acme::domain_from_value_x(&current_x);
+    eprintln!("[bountynet] Domain: {domain}");
+    eprintln!("[bountynet] Serving via vsock on port {}", net::vsock::VSOCK_PORT);
+
+    net::vsock::serve_vsock(&attestation_json)?;
 
     Ok(())
 }
