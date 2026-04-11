@@ -151,8 +151,9 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
 
     let is_cargo = frozen_source.join("Cargo.toml").exists();
     let cmd = build_cmd.clone().unwrap_or_else(|| detect_build_cmd(&frozen_source));
+    let custom_cmd = build_cmd.is_some();
 
-    if is_cargo {
+    if is_cargo && !custom_cmd {
         // Rust: fetch deps into a local vendor directory, then build offline.
         // This ensures all dependencies are captured in the hash.
         eprintln!("[bountynet] Fetching Rust dependencies...");
