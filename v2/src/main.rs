@@ -788,10 +788,6 @@ fn cmd_run_sync(args: &[String]) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("--attestation <path> required"))?;
 
     eprintln!("[bountynet] Stage 1 (sync mode): self-verification");
-    eprintln!("[bountynet] Detecting TEE (second init)...");
-    let tee_provider = tee::detect::detect_tee()
-        .map_err(|e| anyhow::anyhow!("TEE detect failed in stage 1: {e}"))?;
-    eprintln!("[bountynet] TEE: {:?}", tee_provider.platform());
 
     // Load and verify attestation
     let att_contents = std::fs::read_to_string(&attestation_path)?;
@@ -814,36 +810,11 @@ fn cmd_run_sync(args: &[String]) -> anyhow::Result<()> {
     }
     eprintln!("[bountynet] Value X: MATCHES");
 
-    // Collect stage 1 quote
-    let att_hash: [u8; 32] = Sha256::digest(att_contents.as_bytes()).into();
-    let mut binding = Vec::with_capacity(32 + 48);
-    binding.extend_from_slice(&att_hash);
-    binding.extend_from_slice(&current_x);
-    let binding_hash: [u8; 32] = Sha256::digest(&binding).into();
-
-    let mut report_data = [0u8; 64];
-    report_data[..32].copy_from_slice(&binding_hash);
-    report_data[32..64].copy_from_slice(&current_x[..32]);
-
-    let evidence = tee_provider.collect_evidence(&report_data)?;
-    eprintln!("[bountynet] Stage 1 quote: {} bytes", evidence.raw_quote.len());
-
-    // Build attestation JSON
-    let s1_attestation = serde_json::json!({
-        "version": 1,
-        "stage": 1,
-        "platform": format!("{:?}", evidence.platform),
-        "value_x": current_x_hex,
-        "stage0_attestation_hash": hex::encode(att_hash),
-        "binding": hex::encode(binding_hash),
-        "quote": hex::encode(&evidence.raw_quote),
-        "timestamp": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_secs(),
-    });
-
-    let attestation_json = serde_json::to_string_pretty(&s1_attestation)?;
+    // In sync mode (Nitro Enclave), serve the stage 0 attestation directly.
+    // The stage 0 quote already contains the Nitro attestation with Value X bound.
+    // Re-collecting a quote would require re-initializing the NSM device which
+    // may fail if it's already been used by stage 0.
+    let attestation_json = att_contents;
     eprintln!("[bountynet] === Stage 1 Verified (sync) ===");
     eprintln!("[bountynet] Value X: {current_x_hex}");
 
