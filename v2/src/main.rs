@@ -217,8 +217,15 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
     // --- Step 4: Compute artifact hash ---
     eprintln!("[bountynet] Computing artifact hash (A)...");
     let artifact_path = find_artifact(&build_output, &frozen_source);
-    let artifact_bytes = std::fs::read(&artifact_path)?;
-    let a: [u8; 48] = Sha384::digest(&artifact_bytes).into();
+    let (a, artifact_bytes): ([u8; 48], Vec<u8>) = if artifact_path.is_file() {
+        let bytes = std::fs::read(&artifact_path)?;
+        let hash: [u8; 48] = Sha384::digest(&bytes).into();
+        (hash, bytes)
+    } else {
+        // No artifact file (e.g., --cmd true). Hash the build output directory.
+        let hash = compute_tree_hash(&build_output)?;
+        (hash, Vec::new())
+    };
     eprintln!("[bountynet] A = {}", hex::encode(a));
 
     // --- Step 5: Compute Value X ---
@@ -295,9 +302,11 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
     let att_path = output_dir.join("attestation.json");
     std::fs::write(&att_path, serde_json::to_string_pretty(&attestation)?)?;
 
-    // Copy artifact
-    let out_artifact = output_dir.join("artifact");
-    std::fs::copy(&artifact_path, &out_artifact)?;
+    // Copy artifact (if it exists as a file)
+    if artifact_path.is_file() {
+        let out_artifact = output_dir.join("artifact");
+        std::fs::copy(&artifact_path, &out_artifact)?;
+    }
 
     // LATTE L2: embed attestation alongside artifact.
     // When the output directory becomes a container image or deployment,
