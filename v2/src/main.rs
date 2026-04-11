@@ -49,6 +49,7 @@ fn main() -> anyhow::Result<()> {
     match args[1].as_str() {
         "build" => cmd_build(&args[2..]),
         "verify" => cmd_verify(&args[2..]),
+        "enclave" => cmd_enclave(&args[2..]),
         "run" => {
             // Only create tokio runtime if we need it (TLS path).
             // Nitro Enclaves may not support epoll fully.
@@ -756,6 +757,119 @@ async fn cmd_run(args: &[String]) -> anyhow::Result<()> {
         eprintln!("[bountynet] Press Ctrl+C to stop.");
         tokio::signal::ctrl_c().await?;
     }
+
+    Ok(())
+}
+
+// ============================================================================
+// ENCLAVE — single-shot build + serve for Nitro Enclaves
+// ============================================================================
+// Runs build and serve in one process to avoid re-initializing the NSM device.
+
+fn cmd_enclave(args: &[String]) -> anyhow::Result<()> {
+    let mut source_dir: Option<PathBuf> = None;
+    let mut build_cmd: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--cmd" => {
+                i += 1;
+                build_cmd = args.get(i).map(|s| s.to_string());
+            }
+            _ => {
+                if source_dir.is_none() {
+                    source_dir = Some(PathBuf::from(&args[i]));
+                }
+            }
+        }
+        i += 1;
+    }
+
+    let source_dir = source_dir.ok_or_else(|| anyhow::anyhow!("source directory required"))?;
+
+    eprintln!("[bountynet] Enclave mode: build + serve in one process");
+
+    // Detect TEE once
+    let tee_provider = tee::detect::detect_tee()?;
+    eprintln!("[bountynet] TEE: {:?}", tee_provider.platform());
+
+    // Compute CT
+    let ct = compute_tree_hash(&source_dir)?;
+    eprintln!("[bountynet] CT = {}", hex::encode(ct));
+
+    // Ratchet
+    let build_workspace = tempdir()?;
+    let frozen_source = build_workspace.join("src");
+    copy_dir_readonly(&source_dir, &frozen_source)?;
+
+    // Build
+    let build_output = build_workspace.join("build");
+    std::fs::create_dir_all(&build_output)?;
+    let dep_cache = build_workspace.join("deps");
+    std::fs::create_dir_all(&dep_cache)?;
+
+    let cmd = build_cmd.unwrap_or_else(|| detect_build_cmd(&frozen_source));
+    eprintln!("[bountynet] Building: {cmd}");
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&cmd)
+        .current_dir(&frozen_source)
+        .env("CARGO_TARGET_DIR", &build_output)
+        .env("CARGO_HOME", &dep_cache)
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("Build failed: {status}");
+    }
+
+    // Verify ratchet
+    let ct_post = compute_tree_hash(&frozen_source)?;
+    if ct != ct_post {
+        anyhow::bail!("RATCHET VIOLATED");
+    }
+    eprintln!("[bountynet] Ratchet OK");
+
+    // Compute Value X
+    let value_x = compute_tree_hash(&frozen_source)?;
+    eprintln!("[bountynet] X = {}", hex::encode(value_x));
+
+    // Collect quote — using the same tee_provider (single NSM init)
+    let mut binding_input = Vec::with_capacity(48 * 2);
+    binding_input.extend_from_slice(&ct);
+    binding_input.extend_from_slice(&value_x);
+    let binding: [u8; 32] = Sha256::digest(&binding_input).into();
+
+    let mut report_data = [0u8; 64];
+    report_data[..32].copy_from_slice(&binding);
+    report_data[32..64].copy_from_slice(&value_x[..32]);
+
+    let evidence = tee_provider.collect_evidence(&report_data)?;
+    eprintln!("[bountynet] Quote: {} bytes from {:?}", evidence.raw_quote.len(), evidence.platform);
+
+    // Build attestation
+    let attestation = serde_json::json!({
+        "version": 1,
+        "stage": 0,
+        "platform": format!("{:?}", evidence.platform),
+        "source_hash": hex::encode(ct),
+        "value_x": hex::encode(value_x),
+        "binding": hex::encode(binding),
+        "quote": hex::encode(&evidence.raw_quote),
+        "timestamp": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_secs(),
+    });
+
+    let attestation_json = serde_json::to_string_pretty(&attestation)?;
+    let domain = net::acme::domain_from_value_x(&value_x);
+
+    eprintln!("[bountynet] === Enclave Ready ===");
+    eprintln!("[bountynet] Value X: {}", hex::encode(value_x));
+    eprintln!("[bountynet] Domain: {domain}");
+    eprintln!("[bountynet] Serving via vsock on port {}", net::vsock::VSOCK_PORT);
+
+    // Serve — this blocks forever
+    net::vsock::serve_vsock(&attestation_json)?;
 
     Ok(())
 }
