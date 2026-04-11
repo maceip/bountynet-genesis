@@ -564,13 +564,16 @@ async fn cmd_run(args: &[String]) -> anyhow::Result<()> {
     // Stage 1 must also run inside a TEE.
     eprintln!("[bountynet] Stage 1: self-verification");
     eprintln!("[bountynet] Detecting TEE...");
-    let tee_provider = tee::detect::detect_tee().map_err(|e| {
-        anyhow::anyhow!(
-            "No TEE detected: {e}\n\
-             Stage 1 must run inside a TEE for the chain to be complete."
-        )
-    })?;
-    eprintln!("[bountynet] TEE: {:?}", tee_provider.platform());
+    let tee_provider = match tee::detect::detect_tee() {
+        Ok(p) => {
+            eprintln!("[bountynet] TEE: {:?}", p.platform());
+            p
+        }
+        Err(e) => {
+            eprintln!("[bountynet] TEE detection failed: {e}");
+            anyhow::bail!("Stage 1 must run inside a TEE: {e}");
+        }
+    };
 
     // --- Step 2: Load stage 0 attestation ---
     eprintln!("[bountynet] Loading stage 0 attestation: {}", attestation_path.display());
@@ -785,7 +788,9 @@ fn cmd_run_sync(args: &[String]) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("--attestation <path> required"))?;
 
     eprintln!("[bountynet] Stage 1 (sync mode): self-verification");
-    let tee_provider = tee::detect::detect_tee()?;
+    eprintln!("[bountynet] Detecting TEE (second init)...");
+    let tee_provider = tee::detect::detect_tee()
+        .map_err(|e| anyhow::anyhow!("TEE detect failed in stage 1: {e}"))?;
     eprintln!("[bountynet] TEE: {:?}", tee_provider.platform());
 
     // Load and verify attestation
