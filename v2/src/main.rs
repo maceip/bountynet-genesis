@@ -662,48 +662,63 @@ async fn cmd_run(args: &[String]) -> anyhow::Result<()> {
     eprintln!("[bountynet] Domain: {domain}");
 
     // Start TLS server with self-signed cert (will be replaced after ACME)
-    let tls_state = Arc::new(
-        net::tls::TlsState::new_self_signed(&domain)?
-    );
+    let attestation_json = serde_json::to_string_pretty(&s1_attestation)?;
 
-    // Set the attestation JSON to serve
-    tls_state.set_attestation(
-        serde_json::to_string_pretty(&s1_attestation)?
-    ).await;
+    // Detect if we're inside a Nitro Enclave (vsock available, no network)
+    let is_nitro_enclave = std::path::Path::new("/dev/nsm").exists()
+        && !std::path::Path::new("/proc/net/tcp").exists();
 
-    // Spawn TLS server in background
-    let tls_state_clone = tls_state.clone();
-    tokio::spawn(async move {
-        if let Err(e) = net::tls::serve(tls_state_clone, 443).await {
-            eprintln!("[bountynet] TLS server error: {e}");
-        }
-    });
+    if is_nitro_enclave {
+        // Nitro Enclave: serve over vsock (no network available)
+        eprintln!("[bountynet] Nitro Enclave detected — serving via vsock");
+        eprintln!("[bountynet] Domain: {domain}");
+        let json_for_vsock = attestation_json.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = net::vsock::serve_vsock(&json_for_vsock) {
+                eprintln!("[bountynet] vsock server error: {e}");
+            }
+        });
+    } else {
+        // Normal VM: serve over TLS
+        let tls_state = Arc::new(
+            net::tls::TlsState::new_self_signed(&domain)?
+        );
+        tls_state.set_attestation(attestation_json.clone()).await;
 
-    eprintln!("[bountynet] TLS server started on :443");
-    eprintln!("[bountynet] Attestation available at: https://{domain}");
+        let tls_state_clone = tls_state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = net::tls::serve(tls_state_clone, 443).await {
+                eprintln!("[bountynet] TLS server error: {e}");
+            }
+        });
 
-    // Provision real cert from Let's Encrypt (in background)
-    // This replaces the self-signed cert once the challenge completes.
-    let tls_state_for_acme = tls_state.clone();
-    let current_x_for_acme = current_x;
-    tokio::spawn(async move {
-        match net::acme::provision_cert(&current_x_for_acme, true).await {
-            Ok((cert_pem, key_pem)) => {
-                if let Err(e) = tls_state_for_acme
-                    .set_cert(cert_pem.as_bytes(), key_pem.as_bytes())
-                    .await
-                {
-                    eprintln!("[bountynet/acme] Failed to install cert: {e}");
-                } else {
-                    eprintln!("[bountynet/acme] Let's Encrypt cert installed");
+        eprintln!("[bountynet] TLS server started on :443");
+        eprintln!("[bountynet] Attestation available at: https://{domain}");
+
+        // ACME cert provisioning in background
+        let tls_state_for_acme = tls_state.clone();
+        let current_x_for_acme = current_x;
+        tokio::spawn(async move {
+            match net::acme::provision_cert(&current_x_for_acme, true).await {
+                Ok((cert_pem, key_pem)) => {
+                    if let Err(e) = tls_state_for_acme
+                        .set_cert(cert_pem.as_bytes(), key_pem.as_bytes())
+                        .await
+                    {
+                        eprintln!("[bountynet/acme] Failed to install cert: {e}");
+                    } else {
+                        eprintln!("[bountynet/acme] Let's Encrypt cert installed");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[bountynet/acme] Cert provisioning failed: {e}");
+                    eprintln!("[bountynet/acme] Continuing with self-signed cert");
                 }
             }
-            Err(e) => {
-                eprintln!("[bountynet/acme] Cert provisioning failed: {e}");
-                eprintln!("[bountynet/acme] Continuing with self-signed cert");
-            }
-        }
-    });
+        });
+    }
+
+    // (ACME provisioning is inside the TLS branch above)
 
     // --- Step 6: Execute the workload ---
     if let Some(cmd) = run_cmd {
