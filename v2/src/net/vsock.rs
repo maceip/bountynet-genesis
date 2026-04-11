@@ -33,14 +33,10 @@ pub fn serve_vsock(attestation_json: &str) -> Result<()> {
     }
 
     // Bind to VMADDR_CID_ANY (listen for connections from parent)
-    let addr = libc::sockaddr_vm {
-        svm_family: libc::AF_VSOCK as u16,
-        svm_reserved1: 0,
-        svm_port: VSOCK_PORT,
-        svm_cid: libc::VMADDR_CID_ANY,
-        svm_flags: 0,
-        svm_zero: [0; 4],
-    };
+    let mut addr: libc::sockaddr_vm = unsafe { std::mem::zeroed() };
+    addr.svm_family = libc::AF_VSOCK as u16;
+    addr.svm_port = VSOCK_PORT;
+    addr.svm_cid = libc::VMADDR_CID_ANY;
 
     let ret = unsafe {
         libc::bind(
@@ -111,14 +107,10 @@ pub fn connect_to_enclave(enclave_cid: u32) -> Result<RawFd> {
         anyhow::bail!("Failed to create vsock socket");
     }
 
-    let addr = libc::sockaddr_vm {
-        svm_family: libc::AF_VSOCK as u16,
-        svm_reserved1: 0,
-        svm_port: VSOCK_PORT,
-        svm_cid: enclave_cid,
-        svm_flags: 0,
-        svm_zero: [0; 4],
-    };
+    let mut addr: libc::sockaddr_vm = unsafe { std::mem::zeroed() };
+    addr.svm_family = libc::AF_VSOCK as u16;
+    addr.svm_port = VSOCK_PORT;
+    addr.svm_cid = enclave_cid;
 
     let ret = unsafe {
         libc::connect(
