@@ -562,8 +562,12 @@ async fn cmd_run(args: &[String]) -> anyhow::Result<()> {
 
     // --- Step 2: Load stage 0 attestation ---
     eprintln!("[bountynet] Loading stage 0 attestation: {}", attestation_path.display());
-    let att_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&attestation_path)?)?;
+    let att_contents = std::fs::read_to_string(&attestation_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", attestation_path.display()))?;
+    eprintln!("[bountynet] Attestation loaded: {} bytes", att_contents.len());
+    let att_json: serde_json::Value = serde_json::from_str(&att_contents)
+        .map_err(|e| anyhow::anyhow!("Failed to parse attestation JSON: {e}"))?;
+    eprintln!("[bountynet] Attestation parsed");
 
     let stage0_x = att_json["value_x"]
         .as_str()
