@@ -60,6 +60,22 @@ impl TlsState {
     async fn get_attestation(&self) -> String {
         self.attestation_json.read().await.clone()
     }
+
+    /// Sync version for use inside Nitro Enclaves (no tokio)
+    pub fn get_config_sync(&self) -> Arc<ServerConfig> {
+        self.config.blocking_read().clone()
+    }
+
+    /// Sync version for use inside Nitro Enclaves (no tokio)
+    pub fn get_attestation_sync(&self) -> String {
+        self.attestation_json.blocking_read().clone()
+    }
+
+    /// Sync version of set_attestation
+    pub fn set_attestation_sync(&self, json: String) {
+        let mut guard = self.attestation_json.blocking_write();
+        *guard = json;
+    }
 }
 
 /// Start the TLS server. Runs until cancelled.
