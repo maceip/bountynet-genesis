@@ -328,22 +328,86 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
     // --- Step 8: Write output ---
     std::fs::create_dir_all(&output_dir)?;
 
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock")
+        .as_secs();
+
+    // Read sequence number from registry (or start at 1)
+    let sequence_number = {
+        let registry_path = output_dir.join("sequence");
+        match std::fs::read_to_string(&registry_path) {
+            Ok(s) => s.trim().parse::<u64>().unwrap_or(0) + 1,
+            Err(_) => 1,
+        }
+    };
+
+    let platform_str = format!("{:?}", evidence.platform);
+    let value_x_hex = hex::encode(value_x);
+    let domain = net::acme::domain_from_value_x(&value_x);
+
+    // Build KMS-compatible condition fields per platform
+    let kms_conditions = match evidence.platform {
+        quote::Platform::Nitro => {
+            // AWS KMS expects PCR values as 96-char hex (sha384)
+            serde_json::json!({
+                "aws": {
+                    "pcr0": platform_measurement.as_ref().map(|m| hex::encode(m)),
+                    "condition_keys": {
+                        "kms:RecipientAttestation:PCR0": platform_measurement.as_ref().map(|m| hex::encode(m)),
+                    }
+                }
+            })
+        }
+        quote::Platform::SevSnp => {
+            serde_json::json!({
+                "azure": {
+                    "launch_measurement": platform_measurement.as_ref().map(|m| hex::encode(m)),
+                    "maa_claims": {
+                        "x-ms-sevsnpvm-launchmeasurement": platform_measurement.as_ref()
+                            .map(|m| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, m)),
+                        "x-ms-sevsnpvm-is-debuggable": false,
+                    }
+                }
+            })
+        }
+        quote::Platform::Tdx => {
+            serde_json::json!({
+                "gcp": {
+                    "mrtd": platform_measurement.as_ref().map(|m| hex::encode(m)),
+                    "confidential_space_claims": {
+                        "hwmodel": "GCP_INTEL_TDX",
+                        "swname": "BOUNTYNET",
+                    }
+                }
+            })
+        }
+    };
+
     let attestation = serde_json::json!({
-        "version": 1,
+        // Core attestation
+        "version": 2,
         "stage": 0,
-        "platform": format!("{:?}", evidence.platform),
+        "platform": platform_str,
         "platform_measurement": platform_measurement.map(|m| hex::encode(m)),
         "source_hash": hex::encode(ct),
         "dependency_hash": dt.map(|d| hex::encode(d)),
         "artifact_hash": hex::encode(a),
-        "value_x": hex::encode(value_x),
+        "value_x": value_x_hex,
         "binding": hex::encode(binding),
         "quote": hex::encode(&evidence.raw_quote),
-        "timestamp": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock")
-            .as_secs(),
+        "timestamp": timestamp,
+
+        // Upgrade ceremony fields
+        "sequence_number": sequence_number,
+        "domain": domain,
+
+        // KMS-compatible condition fields
+        "kms": kms_conditions,
     });
+
+    // Persist sequence number
+    let _ = std::fs::write(output_dir.join("sequence"), sequence_number.to_string());
 
     let att_path = output_dir.join("attestation.json");
     std::fs::write(&att_path, serde_json::to_string_pretty(&attestation)?)?;
@@ -879,18 +943,22 @@ fn cmd_enclave(args: &[String]) -> anyhow::Result<()> {
     eprintln!("[bountynet] Quote: {} bytes from {:?}", evidence.raw_quote.len(), evidence.platform);
 
     // Build attestation
+    let value_x_hex = hex::encode(value_x);
+    let domain = net::acme::domain_from_value_x(&value_x);
     let attestation = serde_json::json!({
-        "version": 1,
+        "version": 2,
         "stage": 0,
         "platform": format!("{:?}", evidence.platform),
         "source_hash": hex::encode(ct),
-        "value_x": hex::encode(value_x),
+        "value_x": value_x_hex,
         "binding": hex::encode(binding),
         "quote": hex::encode(&evidence.raw_quote),
         "timestamp": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock")
             .as_secs(),
+        "sequence_number": 1,
+        "domain": domain,
     });
 
     let attestation_json = serde_json::to_string_pretty(&attestation)?;
