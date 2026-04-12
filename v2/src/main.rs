@@ -968,25 +968,28 @@ fn cmd_enclave(args: &[String]) -> anyhow::Result<()> {
     eprintln!("[bountynet] Value X: {}", hex::encode(value_x));
     eprintln!("[bountynet] Domain: {domain}");
 
-    // TLS directly on vsock — no loopback needed, no extra packages.
-    // The parent forwards raw TCP bytes over vsock. We terminate TLS here.
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let tls_config = {
-        let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-        let params = rcgen::CertificateParams::new(vec![domain.clone()])?;
-        let cert = params.self_signed(&key_pair)?;
-        net::tls::make_server_config(
-            cert.pem().as_bytes(),
-            key_pair.serialize_pem().as_bytes(),
-        )?
-    };
-    let tls_config = Arc::new(tls_config);
-
-    eprintln!("[bountynet] TLS on vsock (inside enclave, no loopback needed)");
+    // Try TLS on vsock first. If ring crypto fails (some enclaves), fall back to plain vsock.
     eprintln!("[bountynet] Parent should run: bountynet proxy --cid <enclave-cid>");
 
-    // Listen on vsock, do TLS handshake, serve attestation
-    net::vsock::serve_tls_vsock(tls_config, &attestation_json)?;
+    match rustls::crypto::ring::default_provider().install_default() {
+        Ok(_) => {
+            let tls_config = {
+                let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
+                let params = rcgen::CertificateParams::new(vec![domain.clone()])?;
+                let cert = params.self_signed(&key_pair)?;
+                net::tls::make_server_config(
+                    cert.pem().as_bytes(),
+                    key_pair.serialize_pem().as_bytes(),
+                )?
+            };
+            eprintln!("[bountynet] TLS on vsock (inside enclave)");
+            net::vsock::serve_tls_vsock(Arc::new(tls_config), &attestation_json)?;
+        }
+        Err(_) => {
+            eprintln!("[bountynet] TLS crypto unavailable — serving plain HTTP on vsock");
+            net::vsock::serve_vsock(&attestation_json)?;
+        }
+    }
 
     Ok(())
 }
