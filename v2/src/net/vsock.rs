@@ -1,38 +1,155 @@
-//! vsock proxy for Nitro Enclaves.
+//! vsock networking for Nitro Enclaves.
 //!
-//! Nitro Enclaves have no network — only vsock to the parent instance.
-//! This module provides:
-//!   - Enclave side: listen on vsock, serve attestation JSON
-//!   - Parent side: proxy TCP connections to/from the enclave's vsock
+//! TLS terminates INSIDE the enclave. The host never sees plaintext.
 //!
-//! The parent runs TLS termination. The enclave serves plaintext over vsock.
-//! The trust boundary is the enclave — TLS is between the verifier and the parent,
-//! and the attestation proves the enclave's identity regardless of the transport.
+//! Architecture (following Evervault/Turnkey pattern):
+//!   Verifier → TCP:443 → [Parent: tcp-to-vsock bridge] → vsock →
+//!     [Enclave: vsock-to-loopback bridge] → 127.0.0.1:443 →
+//!       rustls TLS termination → attestation JSON
+//!
+//! Two commands:
+//!   bountynet enclave  — runs inside the enclave (vsock listener + TLS server)
+//!   bountynet proxy    — runs on the parent (TCP:443 → vsock bridge)
 
 use anyhow::Result;
-use std::os::unix::io::{FromRawFd, RawFd};
+use std::io::{Read, Write};
 
-/// vsock port for attestation service inside the enclave
+/// vsock port for the bridge
 pub const VSOCK_PORT: u32 = 9384;
 
-/// CID for the parent instance (always 3 for Nitro)
-pub const PARENT_CID: u32 = 3;
+/// Set up loopback interface inside the enclave.
+/// Nitro Enclaves have no network interfaces by default.
+pub fn setup_loopback() -> Result<()> {
+    let status = std::process::Command::new("ifconfig")
+        .args(["lo", "127.0.0.1", "up"])
+        .status();
 
-/// Listen on vsock inside the enclave. Serves attestation JSON to any connection.
+    match status {
+        Ok(s) if s.success() => {
+            eprintln!("[bountynet/vsock] Loopback interface up");
+            Ok(())
+        }
+        _ => {
+            // ifconfig might not exist in minimal images — try ip command
+            let status2 = std::process::Command::new("ip")
+                .args(["link", "set", "lo", "up"])
+                .status();
+            match status2 {
+                Ok(s) if s.success() => {
+                    let _ = std::process::Command::new("ip")
+                        .args(["addr", "add", "127.0.0.1/8", "dev", "lo"])
+                        .status();
+                    eprintln!("[bountynet/vsock] Loopback interface up (via ip)");
+                    Ok(())
+                }
+                _ => {
+                    eprintln!("[bountynet/vsock] WARNING: could not set up loopback");
+                    Ok(()) // Continue anyway — vsock direct serving still works
+                }
+            }
+        }
+    }
+}
+
+/// Bridge: vsock → TCP loopback.
+/// Runs inside the enclave. Accepts vsock connections from the parent
+/// and forwards them to the TLS server on 127.0.0.1:443.
+pub fn bridge_vsock_to_loopback(loopback_port: u16) -> Result<()> {
+    let fd = create_vsock_listener()?;
+    eprintln!("[bountynet/vsock] Bridge listening: vsock:{VSOCK_PORT} → 127.0.0.1:{loopback_port}");
+
+    loop {
+        let client_fd = unsafe {
+            libc::accept(fd, std::ptr::null_mut(), std::ptr::null_mut())
+        };
+        if client_fd < 0 {
+            eprintln!("[bountynet/vsock] Accept failed");
+            continue;
+        }
+
+        let loopback_port = loopback_port;
+        std::thread::spawn(move || {
+            if let Err(e) = pipe_vsock_to_tcp(client_fd, loopback_port) {
+                eprintln!("[bountynet/vsock] Pipe error: {e}");
+            }
+        });
+    }
+}
+
+/// Bridge: TCP → vsock.
+/// Runs on the parent instance. Accepts TCP connections on a port
+/// and forwards them to the enclave's vsock.
+pub fn bridge_tcp_to_vsock(listen_port: u16, enclave_cid: u32) -> Result<()> {
+    let listener = std::net::TcpListener::bind(format!("0.0.0.0:{listen_port}"))?;
+    eprintln!("[bountynet/vsock] Proxy listening: TCP:{listen_port} → vsock CID {enclave_cid}:{VSOCK_PORT}");
+
+    for stream in listener.incoming() {
+        let stream = match stream {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[bountynet/vsock] TCP accept error: {e}");
+                continue;
+            }
+        };
+
+        let cid = enclave_cid;
+        std::thread::spawn(move || {
+            if let Err(e) = pipe_tcp_to_vsock(stream, cid) {
+                eprintln!("[bountynet/vsock] Proxy pipe error: {e}");
+            }
+        });
+    }
+
+    Ok(())
+}
+
+/// Serve attestation JSON directly over vsock (simple mode, no TLS).
+/// Used as a fallback when loopback is not available.
 pub fn serve_vsock(attestation_json: &str) -> Result<()> {
-    // Create vsock socket
+    let fd = create_vsock_listener()?;
+    eprintln!("[bountynet/vsock] Serving attestation on vsock port {VSOCK_PORT}");
+
+    loop {
+        let client_fd = unsafe {
+            libc::accept(fd, std::ptr::null_mut(), std::ptr::null_mut())
+        };
+        if client_fd < 0 {
+            continue;
+        }
+
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            attestation_json.len(),
+            attestation_json
+        );
+
+        let bytes = response.as_bytes();
+        let mut written = 0;
+        while written < bytes.len() {
+            let n = unsafe {
+                libc::write(
+                    client_fd,
+                    bytes[written..].as_ptr() as *const libc::c_void,
+                    bytes.len() - written,
+                )
+            };
+            if n <= 0 { break; }
+            written += n as usize;
+        }
+        unsafe { libc::close(client_fd) };
+    }
+}
+
+// --- Internal helpers ---
+
+fn create_vsock_listener() -> Result<i32> {
     let fd = unsafe {
-        libc::socket(
-            libc::AF_VSOCK,
-            libc::SOCK_STREAM,
-            0,
-        )
+        libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM, 0)
     };
     if fd < 0 {
         anyhow::bail!("Failed to create vsock socket: {}", std::io::Error::last_os_error());
     }
 
-    // Bind to VMADDR_CID_ANY (listen for connections from parent)
     let mut addr: libc::sockaddr_vm = unsafe { std::mem::zeroed() };
     addr.svm_family = libc::AF_VSOCK as u16;
     addr.svm_port = VSOCK_PORT;
@@ -54,57 +171,53 @@ pub fn serve_vsock(attestation_json: &str) -> Result<()> {
         anyhow::bail!("Failed to listen on vsock: {}", std::io::Error::last_os_error());
     }
 
-    eprintln!("[bountynet/vsock] Listening on vsock port {VSOCK_PORT}");
-
-    // Accept connections and serve attestation JSON
-    loop {
-        let client_fd = unsafe {
-            libc::accept(fd, std::ptr::null_mut(), std::ptr::null_mut())
-        };
-        if client_fd < 0 {
-            eprintln!("[bountynet/vsock] Accept failed: {}", std::io::Error::last_os_error());
-            continue;
-        }
-
-        // Write the attestation JSON as an HTTP response
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-            attestation_json.len(),
-            attestation_json
-        );
-
-        let bytes = response.as_bytes();
-        let mut written = 0;
-        while written < bytes.len() {
-            let n = unsafe {
-                libc::write(
-                    client_fd,
-                    bytes[written..].as_ptr() as *const libc::c_void,
-                    bytes.len() - written,
-                )
-            };
-            if n <= 0 {
-                break;
-            }
-            written += n as usize;
-        }
-
-        unsafe { libc::close(client_fd) };
-    }
+    Ok(fd)
 }
 
-/// Connect to the enclave over vsock from the parent instance.
-/// Returns a raw fd connected to the enclave's attestation service.
-pub fn connect_to_enclave(enclave_cid: u32) -> Result<RawFd> {
-    let fd = unsafe {
-        libc::socket(
-            libc::AF_VSOCK,
-            libc::SOCK_STREAM,
-            0,
-        )
+fn pipe_vsock_to_tcp(vsock_fd: i32, loopback_port: u16) -> Result<()> {
+    let tcp = std::net::TcpStream::connect(format!("127.0.0.1:{loopback_port}"))?;
+    let mut tcp_read = tcp.try_clone()?;
+    let mut tcp_write = tcp;
+
+    // vsock fd → safe File wrapper
+    let vsock_file = unsafe { std::fs::File::from_raw_fd(vsock_fd) };
+    let mut vsock_read = vsock_file.try_clone()?;
+    let mut vsock_write = vsock_file;
+
+    // Bidirectional pipe: vsock ↔ tcp
+    let handle = std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = match vsock_read.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            if tcp_write.write_all(&buf[..n]).is_err() { break; }
+        }
+    });
+
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = match tcp_read.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        if vsock_write.write_all(&buf[..n]).is_err() { break; }
+    }
+
+    let _ = handle.join();
+    Ok(())
+}
+
+use std::os::unix::io::FromRawFd;
+
+fn pipe_tcp_to_vsock(tcp: std::net::TcpStream, enclave_cid: u32) -> Result<()> {
+    // Connect to enclave vsock
+    let vsock_fd = unsafe {
+        libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM, 0)
     };
-    if fd < 0 {
-        anyhow::bail!("Failed to create vsock socket");
+    if vsock_fd < 0 {
+        anyhow::bail!("vsock socket failed");
     }
 
     let mut addr: libc::sockaddr_vm = unsafe { std::mem::zeroed() };
@@ -114,42 +227,44 @@ pub fn connect_to_enclave(enclave_cid: u32) -> Result<RawFd> {
 
     let ret = unsafe {
         libc::connect(
-            fd,
+            vsock_fd,
             &addr as *const libc::sockaddr_vm as *const libc::sockaddr,
             std::mem::size_of::<libc::sockaddr_vm>() as u32,
         )
     };
     if ret < 0 {
-        unsafe { libc::close(fd) };
-        anyhow::bail!("Failed to connect to enclave CID {enclave_cid}: {}", std::io::Error::last_os_error());
+        unsafe { libc::close(vsock_fd) };
+        anyhow::bail!("vsock connect to CID {enclave_cid} failed: {}", std::io::Error::last_os_error());
     }
 
-    Ok(fd)
-}
+    let vsock_file = unsafe { std::fs::File::from_raw_fd(vsock_fd) };
+    let mut vsock_read = vsock_file.try_clone()?;
+    let mut vsock_write = vsock_file;
 
-/// Read the attestation JSON from the enclave via vsock.
-pub fn fetch_attestation(enclave_cid: u32) -> Result<String> {
-    let fd = connect_to_enclave(enclave_cid)?;
+    let mut tcp_read = tcp.try_clone()?;
+    let mut tcp_write = tcp;
 
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 4096];
-    loop {
-        let n = unsafe {
-            libc::read(fd, chunk.as_mut_ptr() as *mut libc::c_void, chunk.len())
-        };
-        if n <= 0 {
-            break;
+    // Bidirectional pipe: tcp ↔ vsock
+    let handle = std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = match tcp_read.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            if vsock_write.write_all(&buf[..n]).is_err() { break; }
         }
-        buf.extend_from_slice(&chunk[..n as usize]);
+    });
+
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = match vsock_read.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        if tcp_write.write_all(&buf[..n]).is_err() { break; }
     }
 
-    unsafe { libc::close(fd) };
-
-    let response = String::from_utf8(buf)?;
-    // Skip HTTP headers — find the empty line
-    if let Some(body_start) = response.find("\r\n\r\n") {
-        Ok(response[body_start + 4..].to_string())
-    } else {
-        Ok(response)
-    }
+    let _ = handle.join();
+    Ok(())
 }

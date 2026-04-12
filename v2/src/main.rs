@@ -50,6 +50,7 @@ fn main() -> anyhow::Result<()> {
         "build" => cmd_build(&args[2..]),
         "verify" => cmd_verify(&args[2..]),
         "enclave" => cmd_enclave(&args[2..]),
+        "proxy" => cmd_proxy(&args[2..]),
         "run" => {
             // Only create tokio runtime if we need it (TLS path).
             // Nitro Enclaves may not support epoll fully.
@@ -76,10 +77,42 @@ fn print_usage() {
     eprintln!("bountynet — attested builds and runtime");
     eprintln!();
     eprintln!("Usage:");
-    eprintln!("  bountynet build  <source-dir> [--cmd \"...\"] [--output ./out]");
-    eprintln!("  bountynet verify <attestation.json> [--source-dir <dir>] [--artifact <path>]");
-    eprintln!("  bountynet run    <dir> --attestation <attestation.json> [--cmd \"...\"]");
-    eprintln!("  bountynet merge  <att1.json> <att2.json> [...] --output merged.json");
+    eprintln!("  bountynet build   <source-dir> [--cmd \"...\"] [--output ./out]");
+    eprintln!("  bountynet verify  <attestation.json> [--source-dir <dir>] [--artifact <path>]");
+    eprintln!("  bountynet run     <dir> --attestation <attestation.json> [--cmd \"...\"]");
+    eprintln!("  bountynet enclave <source-dir> [--cmd \"...\"]  (Nitro: build+serve in one)");
+    eprintln!("  bountynet proxy   --cid <enclave-cid>          (parent: TCP:443 → vsock)");
+    eprintln!("  bountynet merge   <att1.json> <att2.json> [...] --output merged.json");
+}
+
+/// TCP-to-vsock proxy. Runs on the parent instance.
+/// Listens on TCP port 443, forwards raw bytes to the enclave's vsock.
+/// The enclave terminates TLS — the parent only sees encrypted traffic.
+fn cmd_proxy(args: &[String]) -> anyhow::Result<()> {
+    let mut cid: Option<u32> = None;
+    let mut port: u16 = 443;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--cid" => {
+                i += 1;
+                cid = args.get(i).and_then(|s| s.parse().ok());
+            }
+            "--port" => {
+                i += 1;
+                port = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(443);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let cid = cid.ok_or_else(|| anyhow::anyhow!("--cid <enclave-cid> required"))?;
+
+    eprintln!("[bountynet] Proxy: TCP:{port} → enclave CID {cid}");
+    eprintln!("[bountynet] TLS terminates inside the enclave. This proxy only sees encrypted bytes.");
+
+    net::vsock::bridge_tcp_to_vsock(port, cid)
 }
 
 // ============================================================================
