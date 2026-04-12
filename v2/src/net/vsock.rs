@@ -140,6 +140,90 @@ pub fn serve_vsock(attestation_json: &str) -> Result<()> {
     }
 }
 
+/// TLS server directly on vsock. No loopback needed.
+/// Each vsock connection gets a rustls TLS handshake.
+/// The parent proxy forwards raw TCP bytes from the verifier.
+pub fn serve_tls_vsock(
+    tls_config: std::sync::Arc<rustls::ServerConfig>,
+    attestation_json: &str,
+) -> Result<()> {
+    let fd = create_vsock_listener()?;
+    eprintln!("[bountynet/vsock] TLS+vsock listening on port {VSOCK_PORT}");
+
+    loop {
+        let client_fd = unsafe {
+            libc::accept(fd, std::ptr::null_mut(), std::ptr::null_mut())
+        };
+        if client_fd < 0 {
+            eprintln!("[bountynet/vsock] Accept failed");
+            continue;
+        }
+
+        let config = tls_config.clone();
+        let body = attestation_json.to_string();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+
+            // Wrap vsock fd as a File for Read/Write
+            let vsock_stream = unsafe { std::fs::File::from_raw_fd(client_fd) };
+            let vsock_read = match vsock_stream.try_clone() {
+                Ok(f) => f,
+                Err(_) => return,
+            };
+
+            // Create a ReadWrite wrapper for rustls
+            let mut stream = VsockStream {
+                read: vsock_read,
+                write: vsock_stream,
+            };
+
+            // TLS handshake on the vsock connection
+            let conn = match rustls::ServerConnection::new(config) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("[bountynet/vsock] TLS conn: {e}");
+                    return;
+                }
+            };
+            let mut tls = rustls::StreamOwned::new(conn, stream);
+
+            // Read the HTTP request
+            let mut buf = [0u8; 4096];
+            let _ = tls.read(&mut buf);
+
+            // Serve attestation
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(), body
+            );
+            let _ = tls.write_all(response.as_bytes());
+            let _ = tls.conn.send_close_notify();
+            let _ = tls.flush();
+        });
+    }
+}
+
+/// Wrapper to give a vsock fd both Read and Write via separate cloned fds.
+struct VsockStream {
+    read: std::fs::File,
+    write: std::fs::File,
+}
+
+impl std::io::Read for VsockStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.read.read(buf)
+    }
+}
+
+impl std::io::Write for VsockStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.write.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.write.flush()
+    }
+}
+
 // --- Internal helpers ---
 
 fn create_vsock_listener() -> Result<i32> {

@@ -122,7 +122,7 @@ pub async fn serve(state: Arc<TlsState>, port: u16) -> Result<()> {
     }
 }
 
-fn make_server_config(cert_pem: &[u8], key_pem: &[u8]) -> Result<ServerConfig> {
+pub fn make_server_config(cert_pem: &[u8], key_pem: &[u8]) -> Result<ServerConfig> {
     let certs: Vec<CertificateDer> = rustls_pemfile::certs(&mut &*cert_pem)
         .collect::<Result<Vec<_>, _>>()?;
 

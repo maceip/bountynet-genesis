@@ -900,63 +900,25 @@ fn cmd_enclave(args: &[String]) -> anyhow::Result<()> {
     eprintln!("[bountynet] Value X: {}", hex::encode(value_x));
     eprintln!("[bountynet] Domain: {domain}");
 
-    // Set up loopback for TLS inside the enclave
-    net::vsock::setup_loopback()?;
-
-    // Install rustls crypto provider
+    // TLS directly on vsock — no loopback needed, no extra packages.
+    // The parent forwards raw TCP bytes over vsock. We terminate TLS here.
     let _ = rustls::crypto::ring::default_provider().install_default();
+    let tls_config = {
+        let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
+        let params = rcgen::CertificateParams::new(vec![domain.clone()])?;
+        let cert = params.self_signed(&key_pair)?;
+        net::tls::make_server_config(
+            cert.pem().as_bytes(),
+            key_pair.serialize_pem().as_bytes(),
+        )?
+    };
+    let tls_config = Arc::new(tls_config);
 
-    // Start TLS server on loopback in a thread
-    let tls_state = Arc::new(net::tls::TlsState::new_self_signed(&domain)?);
-    tls_state.set_attestation_sync(attestation_json);
-
-    let json_for_tls = tls_state.get_attestation_sync();
-    let config = tls_state.get_config_sync();
-    std::thread::spawn(move || {
-        let listener = match std::net::TcpListener::bind("127.0.0.1:443") {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("[bountynet] TLS bind failed: {e}");
-                return;
-            }
-        };
-        eprintln!("[bountynet] TLS server on 127.0.0.1:443 (inside enclave)");
-
-        let acceptor = rustls::server::Acceptor::default();
-
-        for stream in listener.incoming() {
-            let Ok(tcp) = stream else { continue };
-            let config = config.clone();
-            let body = json_for_tls.clone();
-            std::thread::spawn(move || {
-                use std::io::{Read, Write};
-                // Wrap in rustls ServerConnection
-                let mut conn = match rustls::ServerConnection::new(config) {
-                    Ok(c) => c,
-                    Err(e) => { eprintln!("[bountynet/tls] conn: {e}"); return; }
-                };
-                let mut tls = rustls::StreamOwned::new(conn, tcp);
-
-                // Read the request (just need to complete handshake)
-                let mut buf = [0u8; 4096];
-                let _ = tls.read(&mut buf);
-
-                // Serve attestation
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                    body.len(), body
-                );
-                let _ = tls.write_all(response.as_bytes());
-                let _ = tls.conn.send_close_notify();
-                let _ = tls.flush();
-            });
-        }
-    });
-
-    // Bridge vsock → loopback (this blocks forever)
-    eprintln!("[bountynet] vsock bridge: port {} → 127.0.0.1:443", net::vsock::VSOCK_PORT);
+    eprintln!("[bountynet] TLS on vsock (inside enclave, no loopback needed)");
     eprintln!("[bountynet] Parent should run: bountynet proxy --cid <enclave-cid>");
-    net::vsock::bridge_vsock_to_loopback(443)?;
+
+    // Listen on vsock, do TLS handshake, serve attestation
+    net::vsock::serve_tls_vsock(tls_config, &attestation_json)?;
 
     Ok(())
 }
