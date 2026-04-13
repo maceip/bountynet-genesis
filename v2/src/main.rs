@@ -383,30 +383,32 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
     binding_input.extend_from_slice(&a);
     binding_input.extend_from_slice(&value_x);
 
-    // NitroTPM linking: on SNP, read TPM PCRs and include in binding.
-    // This cryptographically links the kernel measurement (TPM domain)
-    // to the SNP attestation (AMD domain) via REPORT_DATA.
-    let tpm_pcrs: Option<Vec<[u8; 32]>> = if tee_provider.platform() == quote::Platform::SevSnp
-        && tee::tpm::tpm_available()
-    {
-        match tee::tpm::read_pcrs() {
-            Ok(pcrs) => {
-                let digest = tee::tpm::pcr_digest(&pcrs);
-                binding_input.extend_from_slice(&digest);
-                eprintln!("[bountynet] NitroTPM PCR digest: {}", hex::encode(digest));
-                for (i, pcr) in pcrs.iter().enumerate() {
-                    eprintln!("[bountynet]   PCR{i}: {}", hex::encode(pcr));
+    // NitroTPM linking: on SNP, collect NitroTPM attestation and bind into REPORT_DATA.
+    // Prefers a signed attestation document (COSE_Sign1, Nitro Hypervisor-signed);
+    // falls back to sysfs PCR reading if the attestation tool isn't installed.
+    // This cryptographically links the kernel measurement (Nitro trust domain)
+    // to the SNP attestation (AMD trust domain).
+    let tpm_attestation: Option<tee::tpm::TpmAttestation> =
+        if tee_provider.platform() == quote::Platform::SevSnp && tee::tpm::tpm_available() {
+            // Use the binding hash as nonce for freshness
+            match tee::tpm::collect_tpm_attestation(&binding) {
+                Ok(att) => {
+                    binding_input.extend_from_slice(&att.digest);
+                    eprintln!("[bountynet] NitroTPM: {} ", att.method);
+                    eprintln!("[bountynet] NitroTPM digest: {}", hex::encode(att.digest));
+                    for (i, pcr) in att.pcrs.iter().enumerate() {
+                        eprintln!("[bountynet]   PCR{i}: {}", hex::encode(pcr));
+                    }
+                    Some(att)
                 }
-                Some(pcrs)
+                Err(e) => {
+                    eprintln!("[bountynet] WARNING: NitroTPM collection failed: {e}");
+                    None
+                }
             }
-            Err(e) => {
-                eprintln!("[bountynet] WARNING: TPM available but PCR read failed: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
     let binding: [u8; 32] = Sha256::digest(&binding_input).into();
 
@@ -494,17 +496,28 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
         }
     };
 
-    // NitroTPM PCR values for the attestation output (SNP only)
-    let tpm_json = tpm_pcrs.as_ref().map(|pcrs| {
-        let pcr_map: std::collections::BTreeMap<String, String> = pcrs.iter()
+    // NitroTPM attestation for the output (SNP only)
+    let tpm_json = tpm_attestation.as_ref().map(|att| {
+        use base64::Engine;
+        let pcr_map: std::collections::BTreeMap<String, String> = att.pcrs.iter()
             .enumerate()
             .map(|(i, pcr)| (format!("pcr{i}"), hex::encode(pcr)))
             .collect();
-        serde_json::json!({
-            "digest": hex::encode(tee::tpm::pcr_digest(pcrs)),
+        let mut obj = serde_json::json!({
+            "method": att.method,
+            "digest": hex::encode(att.digest),
             "pcrs": pcr_map,
-            "note": "sha256(PCR0||...||PCR7) is included in the binding hash and bound into SNP REPORT_DATA"
-        })
+            "note": "digest is bound into SNP REPORT_DATA via the binding hash"
+        });
+        if let Some(ref doc) = att.attestation_doc {
+            obj["attestation_document_b64"] = serde_json::Value::String(
+                base64::engine::general_purpose::STANDARD.encode(doc)
+            );
+            obj["note"] = serde_json::Value::String(
+                "COSE_Sign1 signed by Nitro Hypervisor (same PKI as Nitro Enclaves). Verify against AWS Nitro root CA.".into()
+            );
+        }
+        obj
     });
 
     let attestation = serde_json::json!({
