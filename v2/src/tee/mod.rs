@@ -13,6 +13,7 @@ pub mod nitro;
 pub mod snp;
 #[cfg(feature = "tdx")]
 pub mod tdx;
+pub mod tpm;
 
 use crate::quote::Platform;
 

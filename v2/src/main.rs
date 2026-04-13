@@ -375,13 +375,39 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
     // The TEE hardware signs it. No intermediary ed25519 key needed.
     // Bind (CT, DT, A, X) into report_data.
     // DT is included when present — dependencies are part of the proof.
-    let mut binding_input = Vec::with_capacity(48 * 4);
+    let mut binding_input = Vec::with_capacity(48 * 4 + 32);
     binding_input.extend_from_slice(&ct);
     if let Some(ref dt_hash) = dt {
         binding_input.extend_from_slice(dt_hash);
     }
     binding_input.extend_from_slice(&a);
     binding_input.extend_from_slice(&value_x);
+
+    // NitroTPM linking: on SNP, read TPM PCRs and include in binding.
+    // This cryptographically links the kernel measurement (TPM domain)
+    // to the SNP attestation (AMD domain) via REPORT_DATA.
+    let tpm_pcrs: Option<Vec<[u8; 32]>> = if tee_provider.platform() == quote::Platform::SevSnp
+        && tee::tpm::tpm_available()
+    {
+        match tee::tpm::read_pcrs() {
+            Ok(pcrs) => {
+                let digest = tee::tpm::pcr_digest(&pcrs);
+                binding_input.extend_from_slice(&digest);
+                eprintln!("[bountynet] NitroTPM PCR digest: {}", hex::encode(digest));
+                for (i, pcr) in pcrs.iter().enumerate() {
+                    eprintln!("[bountynet]   PCR{i}: {}", hex::encode(pcr));
+                }
+                Some(pcrs)
+            }
+            Err(e) => {
+                eprintln!("[bountynet] WARNING: TPM available but PCR read failed: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let binding: [u8; 32] = Sha256::digest(&binding_input).into();
 
     let mut report_data = [0u8; 64];
@@ -468,6 +494,19 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
         }
     };
 
+    // NitroTPM PCR values for the attestation output (SNP only)
+    let tpm_json = tpm_pcrs.as_ref().map(|pcrs| {
+        let pcr_map: std::collections::BTreeMap<String, String> = pcrs.iter()
+            .enumerate()
+            .map(|(i, pcr)| (format!("pcr{i}"), hex::encode(pcr)))
+            .collect();
+        serde_json::json!({
+            "digest": hex::encode(tee::tpm::pcr_digest(pcrs)),
+            "pcrs": pcr_map,
+            "note": "sha256(PCR0||...||PCR7) is included in the binding hash and bound into SNP REPORT_DATA"
+        })
+    });
+
     let attestation = serde_json::json!({
         // Core attestation
         "version": 2,
@@ -481,6 +520,9 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
         "binding": hex::encode(binding),
         "quote": hex::encode(&evidence.raw_quote),
         "timestamp": timestamp,
+
+        // NitroTPM kernel measurement (SNP only)
+        "nitro_tpm": tpm_json,
 
         // Upgrade ceremony fields
         "sequence_number": sequence_number,
