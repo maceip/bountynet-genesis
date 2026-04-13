@@ -46,11 +46,11 @@ can verify the proof without trusting the operator.
 
 | Platform | Provider | TEE | Firmware verification | Kernel in measurement | Status |
 |----------|----------|-----|----------------------|----------------------|--------|
-| AWS Nitro | Amazon | Nitro Enclave | .eif reproducible from source | Yes — PCR0 covers everything | **Ready** |
-| GCP TDX | Google | Intel TDX | Google signed endorsement (MRTD). RTMR[1-3] cover our code, verifiable from source. | RTMR[1-2] cover kernel | **Ready** |
+| AWS Nitro | Amazon | Nitro Enclave | .eif reproducible from source (verified: two builds → same PCR0) | Yes — PCR0 covers everything | **Proven** — production KMS ceremony, ACME TLS, remote verify |
+| GCP TDX | Google | Intel TDX | Google signed endorsement (MRTD). RTMR[1-3] cover our code, verifiable from source. | RTMR[1-2] cover kernel | **Proven** — attestation collected, TLS serving |
 | Azure SNP | Microsoft | AMD SEV-SNP | Custom OVMF via IGVM, reproducible from source | Full control — MEASUREMENT covers everything | **Next** |
 | Azure TDX | Microsoft | Intel TDX | Custom firmware, reproducible from source | Full control | **Next** |
-| AWS SNP | Amazon | AMD SEV-SNP | Published source does not match production firmware ([aws/uefi#19](https://github.com/aws/uefi/issues/19)). Kernel measurement via NitroTPM (see below). | Kernel via NitroTPM, not SNP MEASUREMENT | **Ready** (with NitroTPM) |
+| AWS SNP | Amazon | AMD SEV-SNP | Published source does not match production firmware ([aws/uefi#19](https://github.com/aws/uefi/issues/19)). Kernel measurement via NitroTPM (see below). | Kernel via NitroTPM, not SNP MEASUREMENT | **Proven** — attestation collected, TLS serving |
 | Equinix Metal | Equinix | AMD SEV-SNP (bare metal) | Full BIOS control via IPMI. Run your own hypervisor + OVMF. | Full control | Not tested |
 | Hetzner | Hetzner | None | BIOS locked, no SNP/TDX exposed | N/A | Not available |
 | OVH | OVHcloud | None | BIOS locked, no SNP/TDX | N/A | Not available |
@@ -141,3 +141,14 @@ The runtime platform provides the execution trust.
 | AWS SNP | SNP MEASUREMENT (firmware) + NitroTPM (kernel) | PCRs via NitroTPM, linked to SNP report |
 | AWS Nitro | .eif reproducible | PCR0 covers everything |
 | Equinix Metal | Full control | Full control |
+
+## What's Proven (April 2026)
+
+End-to-end on real hardware, not simulated:
+
+- **Three platforms** produce attestations with matching Value X from the same source
+- **Nitro full stack**: build inside enclave, TLS inside enclave via vsock, Let's Encrypt cert via TLS-ALPN-01, KMS integration with real PCR0 enforcement, remote verification from a laptop
+- **Reproducible builds**: two `nitro-cli build-enclave` from the same source produce identical PCR0
+- **KMS upgrade ceremony**: NodeA (PCR0 A) gets secret, NodeA' (PCR0 B) denied — hardware identity enforced
+- **GitHub Action**: `maceip/bountynet-genesis/v2/action` tested on real workflow, correctly refuses on non-TEE runners
+- **One-command verify**: `bountynet verify --remote https://<value_x>.aeon.site` from any machine

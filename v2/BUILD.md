@@ -19,8 +19,9 @@ cp target/release/bountynet /tmp/bountynet-bin
 cp -r src /tmp/src
 
 # 3. Build Docker image
+cp /path/to/v2/Dockerfile.enclave /tmp/Dockerfile.enclave
 cd /tmp
-docker build -t nodea -f /path/to/v2/Dockerfile.enclave .
+docker build -t nodea -f Dockerfile.enclave .
 
 # 4. Build EIF (Enclave Image Format)
 nitro-cli build-enclave --docker-uri nodea:latest --output-file nodea.eif

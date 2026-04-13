@@ -26,8 +26,12 @@ is deterministic.
 
 ### AWS SNP (AMD SEV-SNP)
 
-AWS controls the OVMF firmware, but publishes the source at
-github.com/aws/uefi with Nix reproducible builds.
+AWS controls the OVMF firmware and publishes source at
+github.com/aws/uefi with Nix reproducible builds. **Caveat:**
+as of April 2026, the published source (edk2-stable202211) does
+not match production firmware measurements
+([aws/uefi#19](https://github.com/aws/uefi/issues/19)).
+Kernel measurement is via NitroTPM, not SNP MEASUREMENT directly.
 
 **Verification:**
 1. Clone github.com/aws/uefi, run `nix-build --pure` → get ovmf_img.fd
@@ -38,8 +42,8 @@ github.com/aws/uefi with Nix reproducible builds.
 6. MEASUREMENT in the report (offset 0x090) matches → same code
 
 **Trust assumption:** AMD's PSP signs the report honestly. AWS's
-published OVMF source matches what they actually run. Nix build
-is deterministic.
+published OVMF source matches what they actually run (unverified —
+see caveat above). Nix build is deterministic.
 
 ### GCP TDX (Intel TDX)
 

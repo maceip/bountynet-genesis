@@ -82,7 +82,7 @@ fn print_usage() {
     eprintln!("  bountynet verify  --remote https://<domain>  (fetch + verify from running enclave)");
     eprintln!("  bountynet run     <dir> --attestation <attestation.json> [--cmd \"...\"]");
     eprintln!("  bountynet enclave <source-dir> [--cmd \"...\"]  (Nitro: build+serve in one)");
-    eprintln!("  bountynet proxy   --cid <enclave-cid>          (parent: TCP:443 → vsock)");
+    eprintln!("  bountynet proxy   --cid <enclave-cid> [--acme]  (parent: TCP:443 → vsock + ACME)");
     eprintln!("  bountynet merge   <att1.json> <att2.json> [...] --output merged.json");
 }
 
