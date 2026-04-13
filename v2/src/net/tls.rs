@@ -135,3 +135,36 @@ pub fn make_server_config(cert_pem: &[u8], key_pem: &[u8]) -> Result<ServerConfi
 
     Ok(config)
 }
+
+/// Build a ServerConfig that skips cert validation.
+/// Needed for ACME TLS-ALPN-01 challenge certs which have a critical
+/// acmeIdentifier extension that rustls doesn't understand.
+pub fn make_server_config_unchecked(cert_pem: &[u8], key_pem: &[u8]) -> Result<ServerConfig> {
+    use rustls::sign::CertifiedKey;
+    use rustls::server::ResolvesServerCert;
+
+    let certs: Vec<CertificateDer> = rustls_pemfile::certs(&mut &*cert_pem)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let key_der = rustls_pemfile::private_key(&mut &*key_pem)?
+        .ok_or_else(|| anyhow::anyhow!("no private key found in PEM"))?;
+
+    let signing_key = rustls::crypto::ring::sign::any_supported_type(&key_der)
+        .map_err(|e| anyhow::anyhow!("signing key: {e}"))?;
+
+    let certified = Arc::new(CertifiedKey::new(certs, signing_key));
+
+    #[derive(Debug)]
+    struct StaticResolver(Arc<CertifiedKey>);
+    impl ResolvesServerCert for StaticResolver {
+        fn resolve(&self, _hello: rustls::server::ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+            Some(self.0.clone())
+        }
+    }
+
+    let config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_cert_resolver(Arc::new(StaticResolver(certified)));
+
+    Ok(config)
+}

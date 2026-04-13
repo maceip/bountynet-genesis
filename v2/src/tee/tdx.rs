@@ -113,6 +113,7 @@ fn collect_via_configfs(report_data: &[u8; 64]) -> Result<TeeEvidence, TeeError>
         platform: Platform::Tdx,
         raw_quote: quote,
         cert_chain,
+        kms_private_key: None,
     })
 }
 
@@ -182,5 +183,6 @@ fn collect_via_ioctl(report_data: &[u8; 64]) -> Result<TeeEvidence, TeeError> {
         platform: Platform::Tdx,
         raw_quote: req.tdreport.to_vec(),
         cert_chain: Vec::new(),
+        kms_private_key: None,
     })
 }

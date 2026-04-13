@@ -24,6 +24,11 @@ pub struct TeeEvidence {
     /// Certificate chain for the quote (platform-specific).
     /// Nitro: embedded in COSE. SNP: VCEK chain. TDX: PCK chain.
     pub cert_chain: Vec<Vec<u8>>,
+    /// RSA private key (PKCS8 DER) for KMS integration (Nitro only).
+    /// When present, raw_quote contains the corresponding RSA public key.
+    /// KMS encrypts its CiphertextForRecipient to that key; only this
+    /// enclave can decrypt it.
+    pub kms_private_key: Option<Vec<u8>>,
 }
 
 /// Trait implemented by each TEE platform for evidence collection.

@@ -188,6 +188,7 @@ impl TeeProvider for SnpProvider {
             platform: Platform::SevSnp,
             raw_quote: report_bytes,
             cert_chain,
+            kms_private_key: None,
         })
     }
 
@@ -240,6 +241,7 @@ impl SnpProvider {
             platform: Platform::SevSnp,
             raw_quote: report_bytes,
             cert_chain: Vec::new(),
+            kms_private_key: None,
         })
     }
 }
@@ -280,6 +282,7 @@ fn collect_via_configfs_tsm(report_data: &[u8; 64]) -> Result<TeeEvidence, TeeEr
         platform: Platform::SevSnp,
         raw_quote: quote,
         cert_chain,
+        kms_private_key: None,
     })
 }
 

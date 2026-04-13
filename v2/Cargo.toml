@@ -6,7 +6,7 @@ description = "Attested builds: source → artifact, proven by hardware"
 
 [features]
 default = ["nitro", "sev-snp", "tdx"]
-nitro = ["dep:serde_cbor", "dep:aws-nitro-enclaves-nsm-api", "dep:serde_bytes"]
+nitro = ["dep:serde_cbor", "dep:aws-nitro-enclaves-nsm-api", "dep:serde_bytes", "dep:rsa", "dep:aes", "dep:cbc"]
 sev-snp = ["dep:p384"]
 tdx = []
 
@@ -34,6 +34,9 @@ base64 = "0.22"
 serde_cbor = { version = "0.11", optional = true }
 aws-nitro-enclaves-nsm-api = { version = "0.5", features = ["nix"], optional = true }
 serde_bytes = { version = "0.11", optional = true }
+rsa = { version = "0.9", optional = true }
+aes = { version = "0.8", optional = true }
+cbc = { version = "0.1", features = ["std", "block-padding"], optional = true }
 
 # AMD KDS cert fetch
 reqwest = { version = "0.12", features = ["blocking", "rustls-tls"], default-features = false }

@@ -24,9 +24,7 @@ pub fn verify_platform_quote(
     match platform {
         #[cfg(feature = "nitro")]
         Platform::Nitro => {
-            // Nitro binding is in user_data field (CBOR payload)
-            let (_valid, measurements) = verify_nitro_quote(raw_quote, &[0u8; 32], &[0u8; 48])?;
-            // TODO: check user_data contains expected_binding
+            let (_valid, measurements) = verify_nitro_quote(raw_quote, expected_binding)?;
             Ok(measurements)
         }
         #[cfg(feature = "sev-snp")]
@@ -146,8 +144,7 @@ fn verify_cert_chain_p256(
 #[cfg(feature = "nitro")]
 fn verify_nitro_quote(
     raw_quote: &[u8],
-    expected_pubkey: &[u8; 32],
-    expected_value_x: &[u8; 48],
+    expected_binding: &[u8; 32],
 ) -> Result<(bool, Vec<(String, Vec<u8>)>), VerifyError> {
     use p384::ecdsa::{self, signature::hazmat::PrehashVerifier};
     use serde_cbor::Value;
@@ -256,28 +253,21 @@ fn verify_nitro_quote(
         }
     }
 
-    // --- Binding check: user_data == sha256(pubkey || value_x) ---
-    // This proves both the pubkey and value_x were committed to this attestation.
-    let mut binding = Vec::with_capacity(32 + 48);
-    binding.extend_from_slice(expected_pubkey);
-    binding.extend_from_slice(expected_value_x);
-    let expected_binding = Sha256::digest(&binding).to_vec();
-
+    // --- Binding check: user_data[0..32] == expected_binding ---
+    // user_data carries the full 64-byte report_data:
+    //   [0..32]  = sha256(CT || A || X) — the binding hash
+    //   [32..64] = value_x[0..32] prefix
+    // Same check as SNP/TDX: first 32 bytes must match expected_binding.
     let binding_ok = match &user_data {
-        Some(ud) => {
-            if ud == &expected_binding {
-                true
-            } else {
-                // Fallback: check legacy format sha256(pubkey) for backward compat with old quotes
-                ud == &Sha256::digest(expected_pubkey).to_vec()
-            }
-        }
-        None => false,
+        Some(ud) if ud.len() >= 32 => ud[..32] == expected_binding[..],
+        _ => false,
     };
     if !binding_ok {
-        return Err(VerifyError::PlatformError(
-            "Nitro: user_data does not contain sha256(pubkey||value_x) binding".into(),
-        ));
+        let got = user_data.as_ref().map(|ud| hex::encode(&ud[..ud.len().min(32)])).unwrap_or_default();
+        return Err(VerifyError::PlatformError(format!(
+            "Nitro: user_data binding mismatch\n  expected: {}\n  got:      {}",
+            hex::encode(expected_binding), got
+        )));
     }
 
     // --- COSE_Sign1 signature verification ---

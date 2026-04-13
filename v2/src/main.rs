@@ -79,6 +79,7 @@ fn print_usage() {
     eprintln!("Usage:");
     eprintln!("  bountynet build   <source-dir> [--cmd \"...\"] [--output ./out]");
     eprintln!("  bountynet verify  <attestation.json> [--source-dir <dir>] [--artifact <path>]");
+    eprintln!("  bountynet verify  --remote https://<domain>  (fetch + verify from running enclave)");
     eprintln!("  bountynet run     <dir> --attestation <attestation.json> [--cmd \"...\"]");
     eprintln!("  bountynet enclave <source-dir> [--cmd \"...\"]  (Nitro: build+serve in one)");
     eprintln!("  bountynet proxy   --cid <enclave-cid>          (parent: TCP:443 → vsock)");
@@ -88,9 +89,14 @@ fn print_usage() {
 /// TCP-to-vsock proxy. Runs on the parent instance.
 /// Listens on TCP port 443, forwards raw bytes to the enclave's vsock.
 /// The enclave terminates TLS — the parent only sees encrypted traffic.
+///
+/// With --acme: also provisions a Let's Encrypt cert for the enclave's
+/// Value X domain and installs it via the /tls-cert endpoint.
 fn cmd_proxy(args: &[String]) -> anyhow::Result<()> {
     let mut cid: Option<u32> = None;
     let mut port: u16 = 443;
+    let mut acme = false;
+    let mut acme_staging = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -102,6 +108,11 @@ fn cmd_proxy(args: &[String]) -> anyhow::Result<()> {
                 i += 1;
                 port = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(443);
             }
+            "--acme" => acme = true,
+            "--acme-staging" => {
+                acme = true;
+                acme_staging = true;
+            }
             _ => {}
         }
         i += 1;
@@ -111,6 +122,79 @@ fn cmd_proxy(args: &[String]) -> anyhow::Result<()> {
 
     eprintln!("[bountynet] Proxy: TCP:{port} → enclave CID {cid}");
     eprintln!("[bountynet] TLS terminates inside the enclave. This proxy only sees encrypted bytes.");
+
+    if acme {
+        let proxy_port = port;
+        std::thread::spawn(move || {
+            // Wait for proxy + enclave to be ready
+            eprintln!("[bountynet/acme] Waiting for enclave...");
+            std::thread::sleep(std::time::Duration::from_secs(5));
+
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    eprintln!("[bountynet/acme] Failed to create async runtime: {e}");
+                    return;
+                }
+            };
+
+            rt.block_on(async move {
+                // Install crypto provider for reqwest/rustls
+                let _ = rustls::crypto::ring::default_provider().install_default();
+
+                // Fetch attestation from enclave to get the domain
+                let client = reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .build()
+                    .unwrap();
+
+                let enclave_url = format!("https://127.0.0.1:{proxy_port}");
+                let att: serde_json::Value = match client.get(&enclave_url).send().await {
+                    Ok(r) => match r.text().await {
+                        Ok(body) => match serde_json::from_str(&body) {
+                            Ok(j) => j,
+                            Err(e) => {
+                                eprintln!("[bountynet/acme] Failed to parse attestation: {e}");
+                                return;
+                            }
+                        },
+                        Err(e) => {
+                            eprintln!("[bountynet/acme] Failed to read response: {e}");
+                            return;
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("[bountynet/acme] Enclave not reachable: {e}");
+                        return;
+                    }
+                };
+
+                let domain = match att["domain"].as_str() {
+                    Some(d) => d.to_string(),
+                    None => {
+                        eprintln!("[bountynet/acme] No domain in attestation");
+                        return;
+                    }
+                };
+
+                eprintln!("[bountynet/acme] Domain: {domain}");
+
+                match net::acme::provision_cert_for_enclave(
+                    &domain,
+                    &enclave_url,
+                    acme_staging,
+                ).await {
+                    Ok(()) => {
+                        eprintln!("[bountynet/acme] === ACME COMPLETE ===");
+                        eprintln!("[bountynet/acme] https://{domain} is now valid TLS");
+                    }
+                    Err(e) => {
+                        eprintln!("[bountynet/acme] FAILED: {e}");
+                    }
+                }
+            });
+        });
+    }
 
     net::vsock::bridge_tcp_to_vsock(port, cid)
 }
@@ -456,15 +540,17 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
 // ============================================================================
 
 fn cmd_verify(args: &[String]) -> anyhow::Result<()> {
-    let att_path = args
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("attestation.json path required"))?;
-
+    let mut att_path: Option<String> = None;
+    let mut remote_url: Option<String> = None;
     let mut source_dir: Option<PathBuf> = None;
     let mut artifact_path: Option<PathBuf> = None;
-    let mut i = 1;
+    let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--remote" => {
+                i += 1;
+                remote_url = args.get(i).map(|s| s.to_string());
+            }
             "--source-dir" => {
                 i += 1;
                 source_dir = args.get(i).map(|s| PathBuf::from(s));
@@ -473,13 +559,38 @@ fn cmd_verify(args: &[String]) -> anyhow::Result<()> {
                 i += 1;
                 artifact_path = args.get(i).map(|s| PathBuf::from(s));
             }
-            _ => {}
+            _ => {
+                if att_path.is_none() && !args[i].starts_with("--") {
+                    att_path = Some(args[i].clone());
+                }
+            }
         }
         i += 1;
     }
 
-    let att_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(att_path)?)?;
+    // Load attestation: from --remote URL or local file
+    let att_json: serde_json::Value = if let Some(url) = &remote_url {
+        eprintln!("[bountynet] Fetching attestation from {url}");
+        let response = reqwest::blocking::Client::builder()
+            .danger_accept_invalid_certs(true) // self-signed cert in enclave
+            .build()?
+            .get(url)
+            .send()
+            .map_err(|e| anyhow::anyhow!("fetch failed: {e}"))?;
+        if !response.status().is_success() {
+            anyhow::bail!("HTTP {}: {}", response.status(), url);
+        }
+        let body = response.text()?;
+        serde_json::from_str(&body)
+            .map_err(|e| anyhow::anyhow!("invalid JSON from {url}: {e}"))?
+    } else if let Some(path) = &att_path {
+        serde_json::from_str(&std::fs::read_to_string(path)?)?
+    } else {
+        anyhow::bail!(
+            "Usage: bountynet verify <attestation.json>\n\
+             \x20      bountynet verify --remote https://<domain>"
+        );
+    };
 
     let platform_str = att_json["platform"].as_str().unwrap_or("");
     let ct_hex = att_json["source_hash"].as_str().unwrap_or("");
@@ -812,20 +923,16 @@ async fn cmd_run(args: &[String]) -> anyhow::Result<()> {
         eprintln!("[bountynet] TLS server started on :443");
         eprintln!("[bountynet] Attestation available at: https://{domain}");
 
-        // ACME cert provisioning in background
-        let tls_state_for_acme = tls_state.clone();
-        let current_x_for_acme = current_x;
+        // ACME cert provisioning in background (for non-enclave TLS servers)
+        let domain_for_acme = domain.clone();
         tokio::spawn(async move {
-            match net::acme::provision_cert(&current_x_for_acme, true).await {
-                Ok((cert_pem, key_pem)) => {
-                    if let Err(e) = tls_state_for_acme
-                        .set_cert(cert_pem.as_bytes(), key_pem.as_bytes())
-                        .await
-                    {
-                        eprintln!("[bountynet/acme] Failed to install cert: {e}");
-                    } else {
-                        eprintln!("[bountynet/acme] Let's Encrypt cert installed");
-                    }
+            match net::acme::provision_cert_for_enclave(
+                &domain_for_acme,
+                "https://127.0.0.1:443",
+                true, // staging for now
+            ).await {
+                Ok(()) => {
+                    eprintln!("[bountynet/acme] Let's Encrypt cert installed");
                 }
                 Err(e) => {
                     eprintln!("[bountynet/acme] Cert provisioning failed: {e}");
@@ -942,7 +1049,47 @@ fn cmd_enclave(args: &[String]) -> anyhow::Result<()> {
     let evidence = tee_provider.collect_evidence(&report_data)?;
     eprintln!("[bountynet] Quote: {} bytes from {:?}", evidence.raw_quote.len(), evidence.platform);
 
-    // Build attestation
+    // Stash RSA keys for KMS (Nitro only)
+    let kms_private_key = evidence.kms_private_key.clone();
+
+    // Build KMS state — keeps NSM fd alive for fresh attestation generation.
+    // KMS rejects attestation docs older than 5 minutes, so GET /kms-attestation
+    // calls NSM again with the same RSA pubkey to get a fresh doc.
+    #[cfg(feature = "nitro")]
+    let kms_state: Option<Arc<net::vsock::KmsState>> = if kms_private_key.is_some() {
+        // Extract RSA public key from the evidence (re-derive from private key)
+        use rsa::pkcs8::DecodePrivateKey;
+        use rsa::pkcs8::EncodePublicKey;
+        let rsa_priv = rsa::RsaPrivateKey::from_pkcs8_der(kms_private_key.as_ref().unwrap())
+            .expect("RSA privkey decode");
+        let rsa_pub = rsa::RsaPublicKey::from(&rsa_priv);
+        let rsa_pub_der = rsa_pub.to_public_key_der().expect("RSA pubkey DER").as_bytes().to_vec();
+
+        // Move the tee_provider into KmsState (it holds the NSM fd)
+        // We need it to be a NitroProvider specifically
+        let nsm = match tee_provider.platform() {
+            quote::Platform::Nitro => {
+                // SAFETY: we know detect_tee returned a NitroProvider
+                // Re-create it from the same fd — but we can't move out of Box<dyn TeeProvider>
+                // Instead, just create a new one (nsm_init is idempotent)
+                Arc::new(tee::nitro::NitroProvider::new()?)
+            }
+            _ => unreachable!("kms_private_key is only Some for Nitro"),
+        };
+
+        Some(Arc::new(net::vsock::KmsState {
+            nsm,
+            report_data,
+            rsa_pub_der,
+            rsa_priv_der: kms_private_key.clone().unwrap(),
+        }))
+    } else {
+        None
+    };
+
+    // Build attestation — include base64 attestation document for KMS --recipient flag
+    use base64::Engine;
+    let quote_b64 = base64::engine::general_purpose::STANDARD.encode(&evidence.raw_quote);
     let value_x_hex = hex::encode(value_x);
     let domain = net::acme::domain_from_value_x(&value_x);
     let attestation = serde_json::json!({
@@ -953,20 +1100,29 @@ fn cmd_enclave(args: &[String]) -> anyhow::Result<()> {
         "value_x": value_x_hex,
         "binding": hex::encode(binding),
         "quote": hex::encode(&evidence.raw_quote),
+        "attestation_document_b64": quote_b64,
         "timestamp": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock")
             .as_secs(),
         "sequence_number": 1,
         "domain": domain,
+        "kms": {
+            "has_rsa_key": kms_private_key.is_some(),
+            "fresh_attestation": "/kms-attestation",
+            "unwrap_endpoint": "/kms-unwrap",
+            "usage": "1) GET /kms-attestation → fresh doc  2) aws kms decrypt --recipient ...  3) POST /kms-unwrap"
+        }
     });
 
     let attestation_json = serde_json::to_string_pretty(&attestation)?;
-    let domain = net::acme::domain_from_value_x(&value_x);
 
     eprintln!("[bountynet] === Enclave Ready ===");
     eprintln!("[bountynet] Value X: {}", hex::encode(value_x));
     eprintln!("[bountynet] Domain: {domain}");
+    if kms_private_key.is_some() {
+        eprintln!("[bountynet] KMS: GET /kms-attestation (fresh doc) + POST /kms-unwrap");
+    }
 
     // Try TLS on vsock first. If ring crypto fails (some enclaves), fall back to plain vsock.
     eprintln!("[bountynet] Parent should run: bountynet proxy --cid <enclave-cid>");
@@ -983,7 +1139,19 @@ fn cmd_enclave(args: &[String]) -> anyhow::Result<()> {
                 )?
             };
             eprintln!("[bountynet] TLS on vsock (inside enclave)");
-            net::vsock::serve_tls_vsock(Arc::new(tls_config), &attestation_json)?;
+            #[cfg(feature = "nitro")]
+            {
+                net::vsock::serve_tls_vsock(
+                    Arc::new(tls_config),
+                    &attestation_json,
+                    kms_private_key,
+                    kms_state,
+                )?;
+            }
+            #[cfg(not(feature = "nitro"))]
+            {
+                net::vsock::serve_tls_vsock(Arc::new(tls_config), &attestation_json, kms_private_key)?;
+            }
         }
         Err(_) => {
             eprintln!("[bountynet] TLS crypto unavailable — serving plain HTTP on vsock");

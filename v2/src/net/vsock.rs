@@ -17,6 +17,16 @@ use std::io::{Read, Write};
 /// vsock port for the bridge
 pub const VSOCK_PORT: u32 = 9384;
 
+/// KMS state held by the enclave for the lifetime of the server.
+/// The RSA keypair is generated once; attestation documents are refreshed per-request.
+#[cfg(feature = "nitro")]
+pub struct KmsState {
+    pub nsm: std::sync::Arc<crate::tee::nitro::NitroProvider>,
+    pub report_data: [u8; 64],
+    pub rsa_pub_der: Vec<u8>,
+    pub rsa_priv_der: Vec<u8>,
+}
+
 /// Set up loopback interface inside the enclave.
 /// Nitro Enclaves have no network interfaces by default.
 pub fn setup_loopback() -> Result<()> {
@@ -143,12 +153,30 @@ pub fn serve_vsock(attestation_json: &str) -> Result<()> {
 /// TLS server directly on vsock. No loopback needed.
 /// Each vsock connection gets a rustls TLS handshake.
 /// The parent proxy forwards raw TCP bytes from the verifier.
+///
+/// Routes:
+///   GET  /                → attestation JSON (static, from boot)
+///   GET  /kms-attestation → fresh attestation document (< 5 min old, for KMS)
+///   POST /kms-unwrap      → decrypt CiphertextForRecipient with enclave RSA key
+///   POST /tls-cert        → hot-swap TLS certificate (PEM cert + key, for ACME)
+#[allow(unused_variables)]
 pub fn serve_tls_vsock(
     tls_config: std::sync::Arc<rustls::ServerConfig>,
     attestation_json: &str,
+    kms_private_key: Option<Vec<u8>>,
+    #[cfg(feature = "nitro")] kms_state: Option<std::sync::Arc<KmsState>>,
 ) -> Result<()> {
     let fd = create_vsock_listener()?;
+    let kms_key = std::sync::Arc::new(kms_private_key);
+    // Hot-swappable TLS config — ACME updates this after provisioning a real cert
+    let live_config: std::sync::Arc<std::sync::RwLock<std::sync::Arc<rustls::ServerConfig>>> =
+        std::sync::Arc::new(std::sync::RwLock::new(tls_config));
+    #[cfg(feature = "nitro")]
+    let kms_state_arc = kms_state;
     eprintln!("[bountynet/vsock] TLS+vsock listening on port {VSOCK_PORT}");
+    if kms_key.is_some() {
+        eprintln!("[bountynet/vsock] KMS endpoints: GET /kms-attestation, POST /kms-unwrap");
+    }
 
     loop {
         let client_fd = unsafe {
@@ -159,8 +187,13 @@ pub fn serve_tls_vsock(
             continue;
         }
 
-        let config = tls_config.clone();
+        // Read current TLS config (may have been hot-swapped by ACME)
+        let config = live_config.read().unwrap().clone();
+        let live_cfg = live_config.clone();
         let body = attestation_json.to_string();
+        let kms_key = kms_key.clone();
+        #[cfg(feature = "nitro")]
+        let kms_st = kms_state_arc.clone();
         std::thread::spawn(move || {
             use std::io::{Read, Write};
 
@@ -172,7 +205,7 @@ pub fn serve_tls_vsock(
             };
 
             // Create a ReadWrite wrapper for rustls
-            let mut stream = VsockStream {
+            let stream = VsockStream {
                 read: vsock_read,
                 write: vsock_stream,
             };
@@ -187,20 +220,246 @@ pub fn serve_tls_vsock(
             };
             let mut tls = rustls::StreamOwned::new(conn, stream);
 
-            // Read the HTTP request
-            let mut buf = [0u8; 4096];
-            let _ = tls.read(&mut buf);
+            // Read the full HTTP request (headers + body).
+            // TLS may deliver headers and body in separate records,
+            // so read until we have Content-Length bytes of body.
+            let mut buf = vec![0u8; 32768];
+            let mut total = 0;
+            loop {
+                let n = match tls.read(&mut buf[total..]) {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(_) => break,
+                };
+                total += n;
+                // Check if we have the full request (headers + body)
+                let so_far = &buf[..total];
+                if let Some(hdr_end) = so_far.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let hdr = String::from_utf8_lossy(&so_far[..hdr_end]);
+                    let content_len = hdr.lines()
+                        .find_map(|l| l.strip_prefix("Content-Length: ").or_else(|| l.strip_prefix("content-length: ")))
+                        .and_then(|v| v.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    let body_start = hdr_end + 4;
+                    if total >= body_start + content_len {
+                        break; // Got everything
+                    }
+                }
+                if total >= buf.len() { break; }
+            }
+            let request = String::from_utf8_lossy(&buf[..total]);
 
-            // Serve attestation
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                body.len(), body
-            );
+            // Parse method and path from first line
+            let first_line = request.lines().next().unwrap_or("");
+            let parts: Vec<&str> = first_line.split_whitespace().collect();
+            let method = parts.first().copied().unwrap_or("");
+            let path = parts.get(1).copied().unwrap_or("/");
+
+            let response = match (method, path) {
+                #[cfg(feature = "nitro")]
+                ("GET", "/kms-attestation") => {
+                    handle_kms_attestation(&kms_st)
+                }
+                ("POST", "/kms-unwrap") => {
+                    handle_kms_unwrap(&request, &kms_key)
+                }
+                ("POST", "/tls-cert") => {
+                    handle_tls_cert_swap(&request, &live_cfg)
+                }
+                ("POST", "/acme-challenge") => {
+                    handle_acme_challenge(&request, &live_cfg)
+                }
+                _ => {
+                    // Default: serve attestation JSON
+                    format!(
+                        "HTTP/1.1 200 OK\r\n\
+                         Content-Type: application/json\r\n\
+                         Content-Length: {}\r\n\
+                         Access-Control-Allow-Origin: *\r\n\
+                         \r\n\
+                         {}",
+                        body.len(), body
+                    )
+                }
+            };
+
             let _ = tls.write_all(response.as_bytes());
             let _ = tls.conn.send_close_notify();
             let _ = tls.flush();
         });
     }
+}
+
+/// Handle GET /kms-attestation: generate a fresh attestation document.
+/// KMS rejects documents older than 5 minutes, so the parent must call
+/// this endpoint immediately before each `aws kms decrypt --recipient` call.
+///
+/// Response: JSON { "attestation_document_b64": "<base64>" }
+#[cfg(feature = "nitro")]
+fn handle_kms_attestation(kms_state: &Option<std::sync::Arc<KmsState>>) -> String {
+    let state = match kms_state {
+        Some(s) => s,
+        None => return http_response(400, "KMS state not available"),
+    };
+
+    match state.nsm.fresh_attestation(&state.report_data, &state.rsa_pub_der) {
+        Ok(doc) => {
+            use base64::Engine;
+            let doc_b64 = base64::engine::general_purpose::STANDARD.encode(&doc);
+            eprintln!("[bountynet/vsock] Fresh attestation: {} bytes", doc.len());
+            let json = format!("{{\"attestation_document_b64\":\"{doc_b64}\"}}");
+            format!(
+                "HTTP/1.1 200 OK\r\n\
+                 Content-Type: application/json\r\n\
+                 Content-Length: {}\r\n\
+                 \r\n\
+                 {}",
+                json.len(), json
+            )
+        }
+        Err(e) => {
+            eprintln!("[bountynet/vsock] Fresh attestation failed: {e}");
+            http_response(500, &format!("attestation refresh failed: {e}"))
+        }
+    }
+}
+
+/// Handle POST /kms-unwrap: decrypt CiphertextForRecipient with the enclave's RSA key.
+///
+/// Request body: base64-encoded CiphertextForRecipient from KMS.
+/// Response: base64-encoded plaintext (the decrypted secret).
+///
+/// Flow:
+///   1. Parent calls `aws kms decrypt --recipient ...` → gets CiphertextForRecipient
+///   2. Parent sends it here via `curl -X POST https://.../kms-unwrap -d <base64>`
+///   3. Enclave decrypts with RSA private key → returns plaintext
+/// Handle POST /tls-cert: hot-swap the TLS certificate (normal mode).
+/// Body: PEM cert chain + private key concatenated.
+fn handle_tls_cert_swap(
+    request: &str,
+    live_config: &std::sync::Arc<std::sync::RwLock<std::sync::Arc<rustls::ServerConfig>>>,
+) -> String {
+    swap_tls_config(request, live_config, false)
+}
+
+/// Handle POST /acme-challenge: install ACME challenge cert with acme-tls/1 ALPN.
+/// Body: PEM cert chain + private key concatenated.
+fn handle_acme_challenge(
+    request: &str,
+    live_config: &std::sync::Arc<std::sync::RwLock<std::sync::Arc<rustls::ServerConfig>>>,
+) -> String {
+    swap_tls_config(request, live_config, true)
+}
+
+fn swap_tls_config(
+    request: &str,
+    live_config: &std::sync::Arc<std::sync::RwLock<std::sync::Arc<rustls::ServerConfig>>>,
+    acme_alpn: bool,
+) -> String {
+    let body = match request.find("\r\n\r\n") {
+        Some(pos) => &request[pos + 4..],
+        None => return http_response(400, "malformed request"),
+    };
+
+    if body.is_empty() {
+        return http_response(400, "empty body — send PEM cert + key");
+    }
+
+    // For ACME challenge certs, use unchecked config (acmeIdentifier is a critical
+    // extension that rustls doesn't recognize). Normal certs use standard validation.
+    let config_result = if acme_alpn {
+        crate::net::tls::make_server_config_unchecked(body.as_bytes(), body.as_bytes())
+    } else {
+        crate::net::tls::make_server_config(body.as_bytes(), body.as_bytes())
+    };
+    match config_result {
+        Ok(mut new_config) => {
+            if acme_alpn {
+                // Accept both acme-tls/1 (for LE validation) and h2/http1.1 (for our own POST /tls-cert)
+                new_config.alpn_protocols = vec![
+                    b"acme-tls/1".to_vec(),
+                    b"http/1.1".to_vec(),
+                ];
+                eprintln!("[bountynet/vsock] ACME challenge cert installed (alpn: acme-tls/1 + http/1.1)");
+            } else {
+                eprintln!("[bountynet/vsock] TLS cert hot-swapped");
+            }
+            let mut guard = live_config.write().unwrap();
+            *guard = std::sync::Arc::new(new_config);
+            http_response(200, "cert installed")
+        }
+        Err(e) => {
+            eprintln!("[bountynet/vsock] TLS cert swap failed: {e}");
+            http_response(400, &format!("invalid cert/key: {e}"))
+        }
+    }
+}
+
+fn handle_kms_unwrap(request: &str, kms_key: &Option<Vec<u8>>) -> String {
+    let kms_key = match kms_key {
+        Some(k) => k,
+        None => {
+            return http_response(400, "KMS key not available (not a Nitro enclave?)");
+        }
+    };
+
+    // Extract body after the \r\n\r\n header separator
+    let body = match request.find("\r\n\r\n") {
+        Some(pos) => request[pos + 4..].trim(),
+        None => {
+            return http_response(400, "malformed request");
+        }
+    };
+
+    if body.is_empty() {
+        return http_response(400, "empty body — send base64(CiphertextForRecipient)");
+    }
+
+    // Decode base64 ciphertext
+    use base64::Engine;
+    let ciphertext = match base64::engine::general_purpose::STANDARD.decode(body) {
+        Ok(c) => c,
+        Err(e) => {
+            return http_response(400, &format!("base64 decode error: {e}"));
+        }
+    };
+
+    // Decrypt with RSA-OAEP-SHA256
+    #[cfg(feature = "nitro")]
+    {
+        match crate::tee::nitro::kms_decrypt(kms_key, &ciphertext) {
+            Ok(plaintext) => {
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&plaintext);
+                eprintln!("[bountynet/vsock] KMS unwrap: {} bytes decrypted", plaintext.len());
+                http_response(200, &b64)
+            }
+            Err(e) => {
+                eprintln!("[bountynet/vsock] KMS unwrap failed: {e}");
+                http_response(500, &format!("decrypt failed: {e}"))
+            }
+        }
+    }
+    #[cfg(not(feature = "nitro"))]
+    {
+        http_response(400, "KMS unwrap requires nitro feature")
+    }
+}
+
+fn http_response(status: u16, body: &str) -> String {
+    let reason = match status {
+        200 => "OK",
+        400 => "Bad Request",
+        500 => "Internal Server Error",
+        _ => "Error",
+    };
+    format!(
+        "HTTP/1.1 {status} {reason}\r\n\
+         Content-Type: text/plain\r\n\
+         Content-Length: {}\r\n\
+         \r\n\
+         {}",
+        body.len(), body
+    )
 }
 
 /// Wrapper to give a vsock fd both Read and Write via separate cloned fds.
