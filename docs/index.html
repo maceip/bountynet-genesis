@@ -1,269 +1,465 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>bountynet-genesis — TEE Attested Runners</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/motion@12.7.3/dist/motion.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.1/dist/ethers.umd.min.js"></script>
-    <link rel="stylesheet" href="assets/style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bountynet-genesis // attested builds, proven on silicon</title>
+<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/gh/ekmas/cs16.css@main/css/cs16.min.css">
+<link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
-    <!-- ===== HERO ===== -->
-    <header id="hero">
-        <div class="hero-bg"></div>
-        <div class="container">
-            <div class="hero-badge" data-animate="fade-up">genesis</div>
-            <h1 data-animate="fade-up" data-delay="0.1">
-                <span class="gradient-text">Trust the build.</span><br>
-                <span class="gradient-text-alt">Verify the machine.</span>
-            </h1>
-            <p class="hero-sub" data-animate="fade-up" data-delay="0.2">
-                A GitHub Actions runner that produces cryptographic proof of its own integrity.
-                Three hardware platforms. One universal quote format. Verified on-chain.
-            </p>
-            <div class="hero-actions" data-animate="fade-up" data-delay="0.3">
-                <a href="#generate" class="btn btn-primary">Try It Live</a>
-                <a href="https://github.com/maceip/bountynet-genesis" class="btn btn-outline">View Source</a>
-            </div>
-            <div class="hero-platforms" data-animate="fade-up" data-delay="0.4">
-                <div class="platform-chip" data-platform="nitro">
-                    <span class="chip-dot nitro"></span> AWS Nitro
-                </div>
-                <div class="platform-chip" data-platform="snp">
-                    <span class="chip-dot snp"></span> AMD SEV-SNP
-                </div>
-                <div class="platform-chip" data-platform="tdx">
-                    <span class="chip-dot tdx"></span> Intel TDX
-                </div>
-            </div>
+
+<div class="page">
+
+  <!-- ===== HEADER ===== -->
+  <dialog class="cs-dialog" open>
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper">
+          <div class="icon"></div>
+          <p class="text">bountynet-genesis.exe</p>
         </div>
-    </header>
+      </div>
+      <div class="content">
 
-    <!-- ===== FLOW SECTION ===== -->
-    <section id="flow" class="section">
-        <div class="container">
-            <h2 data-animate="fade-up">How a Quote is Minted</h2>
-            <p class="section-sub" data-animate="fade-up" data-delay="0.1">
-                From boot to on-chain verification in five steps.
-            </p>
-            <div class="flow-grid">
-                <div class="flow-card" data-animate="fade-up" data-delay="0.1">
-                    <div class="flow-num">01</div>
-                    <h3>TEE Boot</h3>
-                    <p>The CPU creates an encrypted memory region. Every byte of code loaded is measured — hashed into tamper-evident registers that can never be rolled back.</p>
-                </div>
-                <div class="flow-card" data-animate="fade-up" data-delay="0.15">
-                    <div class="flow-num">02</div>
-                    <h3>Compute Value X</h3>
-                    <p>bountynet-shim walks every file in the runner directory, hashes them deterministically, and produces a single 48-byte fingerprint. Same code = same X on any platform.</p>
-                </div>
-                <div class="flow-card" data-animate="fade-up" data-delay="0.2">
-                    <div class="flow-num">03</div>
-                    <h3>Bind &amp; Sign</h3>
-                    <p>Value X and a fresh signing key are bound into the TEE's report data. The hardware signs a quote proving this key was generated inside a genuine enclave.</p>
-                </div>
-                <div class="flow-card" data-animate="fade-up" data-delay="0.25">
-                    <div class="flow-num">04</div>
-                    <h3>Wrap in UnifiedQuote</h3>
-                    <p>The platform-specific evidence gets wrapped into a single format with an ed25519 signature. ~180 bytes on-chain, full quote off-chain and hash-linked.</p>
-                </div>
-                <div class="flow-card" data-animate="fade-up" data-delay="0.3">
-                    <div class="flow-num">05</div>
-                    <h3>Serve &amp; Verify</h3>
-                    <p>The runner serves /attest for remote verification while executing your jobs. Anyone can verify Layer 1 (signature) or Layer 2 (full hardware chain).</p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- ===== RUNNER STATUS ===== -->
-    <section id="runner" class="section section-dark">
-        <div class="container">
-            <h2 data-animate="fade-up">Live Runner</h2>
-            <p class="section-sub" data-animate="fade-up" data-delay="0.1">
-                A real GitHub Actions runner on Intel TDX hardware, serving attestation right now.
-            </p>
-            <div class="runner-status" data-animate="fade-up" data-delay="0.2">
-                <div class="status-row">
-                    <span class="status-label">Platform</span>
-                    <span class="status-value" id="runner-platform">—</span>
-                </div>
-                <div class="status-row">
-                    <span class="status-label">Value X</span>
-                    <span class="status-value mono" id="runner-valuex">—</span>
-                </div>
-                <div class="status-row">
-                    <span class="status-label">Pubkey</span>
-                    <span class="status-value mono" id="runner-pubkey">—</span>
-                </div>
-                <div class="status-row">
-                    <span class="status-label">Status</span>
-                    <span class="status-value" id="runner-status">
-                        <span class="status-dot offline"></span> Checking...
-                    </span>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- ===== 1) GENERATE QUOTE ===== -->
-    <section id="generate" class="section">
-        <div class="container">
-            <h2 data-animate="fade-up">1. Generate Quote</h2>
-            <p class="section-sub" data-animate="fade-up" data-delay="0.1">
-                Request a fresh attestation quote from the running TEE. See it raw or parsed.
-            </p>
-            <div class="generate-panel" data-animate="fade-up" data-delay="0.2">
-                <div class="panel-header">
-                    <div class="tab-bar">
-                        <button class="tab active" data-tab="parsed">Parsed</button>
-                        <button class="tab" data-tab="raw">Raw</button>
-                    </div>
-                    <button class="btn btn-sm btn-primary" id="btn-generate">Generate Quote</button>
-                </div>
-                <div class="panel-body">
-                    <!-- Parsed View -->
-                    <div class="tab-content active" id="tab-parsed">
-                        <div class="parsed-grid" id="parsed-fields">
-                            <div class="parsed-empty">
-                                Click "Generate Quote" to request a fresh attestation from the TEE.
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Raw View (nano-style) -->
-                    <div class="tab-content" id="tab-raw">
-                        <div class="nano-shell">
-                            <div class="nano-header">
-                                <span>GNU nano 7.2</span>
-                                <span>unified_quote.json</span>
-                                <span>Modified</span>
-                            </div>
-                            <pre class="nano-body" id="raw-output">
-  Waiting for quote generation...
-
-  Press "Generate Quote" to fetch a fresh
-  attestation from the running TEE.
-
-
-
-
+<pre class="banner">
+   __                    __              __      _________________
+  / /_  ____  __  ______/ /___  ______  / /___  / ____/ ____/ ____/
+ / __ \/ __ \/ / / / __  / __ \/ ___/ / / / __ \/ __/ / __/ / /
+/ /_/ / /_/ / /_/ / /_/ / / / / /  / /_/ / / / / /___/ /___/ /___
+\_.___/\____/\__,_/\__,_/_/ /_/_/   \__/_/_/ /_/_____/_____/\____/
+                                                    // genesis 2026
 </pre>
-                            <div class="nano-footer">
-                                <span>^G Help</span>
-                                <span>^O Write Out</span>
-                                <span>^W Where Is</span>
-                                <span>^K Cut</span>
-                                <span>^T Execute</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
 
-    <!-- ===== 2) REMOTE ATTESTATION ===== -->
-    <section id="verify" class="section section-dark">
-        <div class="container">
-            <h2 data-animate="fade-up">2. Remote Attestation</h2>
-            <p class="section-sub" data-animate="fade-up" data-delay="0.1">
-                Verify the quote cryptographically — right here in your browser.
-            </p>
-            <div class="verify-panel" data-animate="fade-up" data-delay="0.2">
-                <div class="verify-steps">
-                    <div class="verify-step" id="step-fetch">
-                        <div class="step-icon">1</div>
-                        <div class="step-content">
-                            <h4>Fetch Quote</h4>
-                            <p>Request the compact attestation from /attest</p>
-                        </div>
-                        <div class="step-status">—</div>
-                    </div>
-                    <div class="verify-step" id="step-signature">
-                        <div class="step-icon">2</div>
-                        <div class="step-content">
-                            <h4>Verify Signature</h4>
-                            <p>Check ed25519 signature over canonical fields (Layer 1)</p>
-                        </div>
-                        <div class="step-status">—</div>
-                    </div>
-                    <div class="verify-step" id="step-valuex">
-                        <div class="step-icon">3</div>
-                        <div class="step-content">
-                            <h4>Check Value X</h4>
-                            <p>Compare against known-good runner identity</p>
-                        </div>
-                        <div class="step-status">—</div>
-                    </div>
-                    <div class="verify-step" id="step-platform">
-                        <div class="step-icon">4</div>
-                        <div class="step-content">
-                            <h4>Platform Check</h4>
-                            <p>Verify platform_quote_hash links to full TEE evidence</p>
-                        </div>
-                        <div class="step-status">—</div>
-                    </div>
-                </div>
-                <button class="btn btn-primary btn-lg" id="btn-verify">Run Verification</button>
-                <div class="verify-result" id="verify-result"></div>
-            </div>
-        </div>
-    </section>
+<h1>A verifiable, universal build runner.</h1>
 
-    <!-- ===== 3) ON-CHAIN VERIFICATION ===== -->
-    <section id="onchain" class="section">
-        <div class="container">
-            <h2 data-animate="fade-up">3. On-Chain Verification</h2>
-            <p class="section-sub" data-animate="fade-up" data-delay="0.1">
-                Submit the attestation to a smart contract on Sepolia.
-                The contract stores the TEE identity and gates all future actions behind attestation proof.
-            </p>
-            <div class="onchain-panel" data-animate="fade-up" data-delay="0.2">
-                <div class="wallet-section">
-                    <button class="btn btn-primary btn-lg" id="btn-connect">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12V7H5a2 2 0 010-4h14v4"/><path d="M3 5v14a2 2 0 002 2h16v-5"/><path d="M18 12a2 2 0 100 4 2 2 0 000-4z"/></svg>
-                        Connect Wallet
-                    </button>
-                    <div class="wallet-info" id="wallet-info" style="display:none">
-                        <span class="wallet-address" id="wallet-address"></span>
-                        <span class="wallet-network" id="wallet-network"></span>
-                    </div>
-                </div>
-                <div class="onchain-actions" id="onchain-actions" style="display:none">
-                    <div class="action-card">
-                        <h4>Register TEE Identity</h4>
-                        <p>Deploy attestation identity on-chain. Costs gas + registers Value X, platform, and pubkey.</p>
-                        <button class="btn btn-primary" id="btn-register">Register on Sepolia</button>
-                    </div>
-                    <div class="action-card">
-                        <h4>Verify On-Chain</h4>
-                        <p>Check if the current runner's Value X matches the registered on-chain identity.</p>
-                        <button class="btn btn-outline" id="btn-onchain-verify">Verify Match</button>
-                    </div>
-                </div>
-                <div class="onchain-log" id="onchain-log"></div>
-            </div>
-        </div>
-    </section>
+<p>
+<strong>bountynet</strong> answers one question with cryptographic proof:
+<em>is the code running on that machine the same code that's in the repo?</em>
+Not "probably." Not "we checked last Tuesday." Not "the cloud provider promises."
+A proof rooted in hardware that anyone can verify and nobody can argue with.
+</p>
 
-    <!-- ===== FOOTER ===== -->
-    <footer class="footer">
-        <div class="container">
-            <div class="footer-content">
-                <div class="footer-brand">bountynet-genesis</div>
-                <div class="footer-links">
-                    <a href="https://github.com/maceip/bountynet-genesis">GitHub</a>
-                    <a href="https://github.com/maceip/bountynet-genesis/actions">Actions</a>
-                </div>
-            </div>
-            <p class="footer-note">Trust the build. Verify the machine.</p>
-        </div>
-    </footer>
+<p>
+Proven on real silicon across three independent TEE vendors on 2026-04-14.
+The chain is closed on itself: the build runner that produced this binary is
+itself an attested build of this repo.
+</p>
 
-    <script src="assets/app.js"></script>
+<menu class="footer-btns">
+  <a href="https://github.com/maceip/bountynet-genesis" class="cs-btn">source on github</a>
+  <a href="#flow" class="cs-btn">how it works</a>
+  <a href="#ouroboros" class="cs-btn">the ouroboros</a>
+</menu>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== STATUS BOARD ===== -->
+  <dialog class="cs-dialog" open>
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><p class="text">platform_status.log</p></div>
+      </div>
+      <div class="content">
+
+<table class="cs-table">
+<tr>
+  <th>platform</th>
+  <th>hardware</th>
+  <th>root of trust</th>
+  <th>chain</th>
+  <th>status</th>
+</tr>
+<tr>
+  <td>Intel TDX</td>
+  <td>GCP c3-standard-4</td>
+  <td>Intel SGX Root CA</td>
+  <td>stage 0 &rarr; stage 1</td>
+  <td class="ok">PROVEN</td>
+</tr>
+<tr>
+  <td>AMD SEV-SNP</td>
+  <td>AWS c6a.xlarge</td>
+  <td>AMD Root Key (ARK)</td>
+  <td>stage 0 &rarr; stage 1</td>
+  <td class="ok">PROVEN</td>
+</tr>
+<tr>
+  <td>AWS Nitro</td>
+  <td>AWS m5.xlarge enclave</td>
+  <td>AWS Nitro Root CA</td>
+  <td>stage 0 (enclave)</td>
+  <td class="ok">PROVEN</td>
+</tr>
+</table>
+
+<p class="small">
+Real attestation bytes from each run are archived in
+<code>v2/testdata/chain/</code> and re-verified on every commit via
+<code>hardware_regression.rs</code>. Any regression in the producer or
+verifier surfaces in CI before a hardware run is needed.
+</p>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== THE THREE CHECKS ===== -->
+  <dialog class="cs-dialog" open id="invariant">
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><p class="text">invariant.md // the three checks</p></div>
+      </div>
+      <div class="content">
+
+<p>
+Everything in this repo exists to solve one problem. It breaks down into
+exactly three checks. If any one fails, the attestation is worthless.
+</p>
+
+<div class="mermaid">
+flowchart TB
+    Q[hardware quote<br/>signed by CPU vendor]
+    P[1. platform measurement<br/>matches expected value<br/>MRTD / MEASUREMENT / PCR0]
+    X[2. Value X<br/>sha384 of runner source<br/>matches expected value]
+    K[3. pubkey in quote<br/>was generated inside the TEE<br/>sha256 tls_spki hash in report_data]
+    OK[attestation is real]
+    Q --> P
+    Q --> X
+    Q --> K
+    P --> OK
+    X --> OK
+    K --> OK
+</div>
+
+<p class="small">
+Check #1 proves the boot image is genuine (shim is in the boot image, CPU measured it).
+Check #2 proves the application payload is genuine (Value X computed by the shim, which
+is trusted because of #1). Check #3 proves the UnifiedQuote was produced by the attested
+environment, not a proxy (channel binding).
+</p>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== STAGE 0 to STAGE 1 CHAIN ===== -->
+  <dialog class="cs-dialog" open id="flow">
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><p class="text">stage 0 &rarr; stage 1 chain</p></div>
+      </div>
+      <div class="content">
+
+<p>
+<strong>Attestable Containers</strong> (Cambridge, CCS 2025) defines a
+(PCR, CT, A) binding: the TEE attests that source S compiled into artifact A
+inside environment E. The paper leaves the build-to-runtime chain to the consumer.
+We implement it.
+</p>
+
+<div class="mermaid">
+sequenceDiagram
+    participant Dev as developer
+    participant Git as git repo
+    participant S0 as stage 0 TEE<br/>(bountynet build)
+    participant Disk as disk
+    participant S1 as stage 1 TEE<br/>(bountynet run)
+    participant Cli as verifier<br/>(bountynet check)
+    Dev->>Git: push source
+    Git->>S0: clone inside TEE
+    S0->>S0: CT = sha384(source)
+    S0->>S0: ratchet: freeze source read-only
+    S0->>S0: build + A = sha384(artifact)
+    S0->>S0: ratchet check
+    S0->>S0: Value X = sha384(frozen source)
+    S0->>S0: binding_bytes() from partial EAT
+    S0->>S0: collect quote with binding in report_data
+    S0->>Disk: attestation.cbor
+    Note over S1: boot inside TEE
+    Disk->>S1: load stage 0 EAT
+    S1->>S1: verify stage 0 quote vs vendor root
+    S1->>S1: recompute Value X from disk
+    S1->>S1: set_previous(stage0_cbor)
+    S1->>S1: binding_bytes() includes sha256(stage0_cbor)
+    S1->>S1: collect new quote
+    S1->>Cli: TLS handshake<br/>(attested-TLS cert carries stage 1 EAT)
+    Cli->>Cli: extract EAT from cert extension
+    Cli->>Cli: check tls_spki_hash vs cert SPKI
+    Cli->>Cli: verify stage 1 quote vs vendor root
+    Cli->>Cli: walk previous_attestation
+    Cli->>Cli: verify stage 0 quote vs vendor root
+    Cli->>Cli: assert Value X stable across chain
+    Cli-->>Dev: green / red
+</div>
+
+<p class="small">
+Every link is a hash committed to a hardware-signed report_data. No gaps.
+A tamper at any point changes a hash, which changes a binding, which
+changes report_data, which fails the vendor's signature check.
+</p>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== EAT SCHEMA ===== -->
+  <dialog class="cs-dialog" open>
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><p class="text">EAT token schema</p></div>
+      </div>
+      <div class="content">
+
+<p>
+IETF RATS Entity Attestation Token (<a href="https://datatracker.ietf.org/doc/rfc9711/" target="_blank">RFC 9711</a>),
+profile <code>https://bountynet.dev/eat/v2</code>. CBOR-encoded, embedded
+in an X.509 extension at OID <code>2.23.133.5.4.9</code>
+(TCG DICE Conceptual Message Wrapper), same convention Gramine uses.
+</p>
+
+<pre class="code">EatToken {
+  version:              u32           // schema version
+  eat_profile:          string        // "https://bountynet.dev/eat/v2"
+  value_x:              [u8; 48]      // sha384 of runner source — LATTE L2
+  platform:             u8            // 1 Nitro / 2 SevSnp / 3 Tdx
+  platform_measurement: Vec&lt;u8&gt;       // PCR0 / MEASUREMENT / MRTD
+  platform_quote:       Vec&lt;u8&gt;       // raw TEE evidence, opaque leaf
+  tls_spki_hash:        [u8; 32]      // sha256(server TLS SPKI) — channel binding
+  source_hash:          [u8; 48]      // CT — Attestable Containers
+  artifact_hash:        [u8; 48]      // A — Attestable Containers
+  iat:                  u64           // issued at, unix seconds
+  eat_nonce:            [u8; 32]      // freshness
+  previous_attestation: Vec&lt;u8&gt;       // prior stage's CBOR bytes
+}
+
+binding_bytes() = sha256(
+  version || profile || value_x || platform ||
+  tls_spki_hash || source_hash || artifact_hash ||
+  iat || eat_nonce || previous_hash()
+)
+
+previous_hash() = sha256(previous_attestation)   // or zeros for root
+
+// binding_bytes() goes into report_data[0..32] of the TEE quote.
+// The TEE hardware signs report_data. No separate app-level key.
+// LATTE contribution #7: use the platform attestation key, not an app key.</pre>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== OUROBOROS ===== -->
+  <dialog class="cs-dialog" open id="ouroboros">
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><p class="text">ouroboros.sh // CI builds itself</p></div>
+      </div>
+      <div class="content">
+
+<p>
+Every push to <code>main</code> that touches <code>v2/</code> triggers
+<code>.github/workflows/attested-self-build.yml</code>, which dispatches
+to our self-hosted GCP TDX runner. The runner checks out the commit,
+runs <code>bountynet build v2/</code> inside the TEE, and uploads a real
+Intel-TDX-signed attestation as a workflow artifact.
+</p>
+
+<div class="mermaid">
+flowchart LR
+    Push[developer push to main]
+    GH[github.com]
+    Dispatch[workflow dispatch]
+    Runner[self-hosted TDX runner<br/>GCP c3-standard-4]
+    Checkout[checkout commit]
+    Build[sudo bountynet build v2/]
+    TDX[TDX module collects quote<br/>signed by Intel]
+    Upload[upload attestation.cbor<br/>as workflow artifact]
+    Verify[verifier downloads,<br/>runs verify_platform_quote]
+    Archive[commit testdata/chain/tdx_ouroboros.cbor<br/>as permanent record]
+    Push --> GH
+    GH --> Dispatch
+    Dispatch --> Runner
+    Runner --> Checkout
+    Checkout --> Build
+    Build --> TDX
+    TDX --> Upload
+    Upload --> Verify
+    Verify --> Archive
+    Archive -.->|next release<br/>chains to this| Build
+</div>
+
+<p class="small">
+The dashed arrow is the ouroboros. Every future release of bountynet is
+provably built by a previous attested build of bountynet. The chain can
+be walked back to the first hardware run. First run:
+commit <code>2593db6</code>, 2026-04-14 12:40 UTC.
+</p>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== PLATFORMS + TRUST ROOTS ===== -->
+  <dialog class="cs-dialog" open>
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><p class="text">trust anchors // three independent vendors</p></div>
+      </div>
+      <div class="content">
+
+<p>
+Anytrust (Attestable Containers contribution #4): if two independent TEE
+vendors attest the same Value X from the same source, trust at least one &rarr;
+trust the build. Our code verifies against the vendor root CA for each
+platform. The roots are pinned in <code>quote/verify.rs</code>.
+</p>
+
+<div class="mermaid">
+flowchart TB
+    Src[source tree<br/>Value X = sha384 of files]
+    Src --> TDX[Intel TDX]
+    Src --> SNP[AMD SEV-SNP]
+    Src --> NIT[AWS Nitro]
+    TDX --> TDXQ[TD quote + MRTD]
+    SNP --> SNPQ[attestation report + MEASUREMENT]
+    NIT --> NITQ[COSE Sign1 doc + PCR0]
+    TDXQ --> IntelCA[Intel SGX Root CA]
+    SNPQ --> AMDARK[AMD Root Key ARK]
+    NITQ --> NitroCA[AWS Nitro Root CA]
+    IntelCA --> Any[anyone can verify<br/>no bountynet server needed]
+    AMDARK --> Any
+    NitroCA --> Any
+</div>
+
+<p class="small">
+An attacker would need to compromise <em>all three</em> of Intel, AMD,
+and Amazon simultaneously to fake a Value X that verifies on all three
+platforms. No cloud provider is in the trust chain — only the silicon
+vendors.
+</p>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== STANDARDS ===== -->
+  <dialog class="cs-dialog" open>
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><p class="text">standards.txt</p></div>
+      </div>
+      <div class="content">
+
+<table class="cs-table">
+<tr><th>what we build</th><th>derived from</th></tr>
+<tr>
+  <td>Two-layer check (platform + portable identity)</td>
+  <td>LATTE (Xu et al., SJTU, EuroS&amp;P 2025)</td>
+</tr>
+<tr>
+  <td>Ratchet + build-inside-TEE + (PCR, CT, A) binding</td>
+  <td>Attestable Containers (Cambridge/JKU, CCS 2025)</td>
+</tr>
+<tr>
+  <td>Build-to-runtime chain (AC contribution #6)</td>
+  <td>Left to consumer; we implement it</td>
+</tr>
+<tr>
+  <td>EAT token format</td>
+  <td>IETF RATS RFC 9711</td>
+</tr>
+<tr>
+  <td>X.509 extension delivery</td>
+  <td>TCG DICE Attestation Architecture v1.1 (OID 2.23.133.5.4.9)</td>
+</tr>
+<tr>
+  <td>Bootstrap-once, then cheap signatures</td>
+  <td>Flashbots Andromeda / SIRRAH</td>
+</tr>
+</table>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== QUICK START ===== -->
+  <dialog class="cs-dialog" open>
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><p class="text">quick_start.sh</p></div>
+      </div>
+      <div class="content">
+
+<pre class="code">$ git clone https://github.com/maceip/bountynet-genesis
+$ cd bountynet-genesis/v2
+$ cargo build --release
+$ cargo test                    # 65 tests including 6 real-hardware regressions
+
+# inside a TEE — stage 0 build
+$ sudo ./target/release/bountynet build /path/to/source \
+    --cmd "your build cmd" \
+    --output ./attest-out
+
+# inside a TEE — stage 1 runtime, chains to stage 0, serves attested TLS on :443
+$ sudo ./target/release/bountynet run /path/to/source \
+    --attestation ./attest-out/attestation.cbor
+
+# anywhere — verify an attested-TLS endpoint. no TEE required on the verifier.
+$ ./target/release/bountynet check https://&lt;domain&gt;/</pre>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== FOOTER ===== -->
+  <dialog class="cs-dialog" open>
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><p class="text">readme.txt</p></div>
+      </div>
+      <div class="content">
+<p>
+<strong>bountynet-genesis</strong> is MIT-licensed.
+Constitution at <a href="https://github.com/maceip/bountynet-genesis/blob/main/v2/CONSTITUTION.md">v2/CONSTITUTION.md</a>.
+Architectural memory at <a href="https://github.com/maceip/bountynet-genesis/blob/main/v2/DESIGN.md">v2/DESIGN.md</a>.
+Hardware runbook at <a href="https://github.com/maceip/bountynet-genesis/blob/main/v2/HARDWARE_VALIDATION.md">v2/HARDWARE_VALIDATION.md</a>.
+</p>
+<p class="small">
+// built inside a TEE that built itself
+</p>
+      </div>
+    </form>
+  </dialog>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'base',
+  themeVariables: {
+    background: '#4c5844',
+    primaryColor: '#8a9a6b',
+    primaryTextColor: '#dbe4c9',
+    primaryBorderColor: '#232b1f',
+    lineColor: '#dbe4c9',
+    secondaryColor: '#6b7c52',
+    tertiaryColor: '#4c5844',
+    nodeBorder: '#232b1f',
+    clusterBkg: '#6b7c52',
+    clusterBorder: '#232b1f',
+    defaultLinkColor: '#dbe4c9',
+    fontSize: '14px',
+    fontFamily: '"VT323", "Courier New", monospace'
+  },
+  flowchart: { curve: 'basis', padding: 20 },
+  sequence: { actorMargin: 30, boxMargin: 10, messageFontSize: 13 }
+});
+</script>
+
 </body>
 </html>
