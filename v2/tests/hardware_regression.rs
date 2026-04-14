@@ -112,6 +112,22 @@ fn nitro_stage0_verifies() {
     verify_full_path(&load("nitro_stage0.cbor"), Platform::Nitro);
 }
 
+/// The ouroboros run: this attestation.cbor was produced by the
+/// self-hosted GitHub Actions workflow `attested-self-build.yml`
+/// running on a GCP TDX instance, on 2026-04-14, in response to the
+/// push of commit 2593db6 which added that very workflow file. This
+/// is the first time bountynet was built inside a TEE *as a CI step
+/// of its own repository*, rather than by a hand-typed SSH command.
+///
+/// Keeping this byte-identical copy in testdata is an archival
+/// record: it's the exact attestation that proved the ouroboros
+/// closed. The test verifies it through the same
+/// `verify_platform_quote` path as every other TDX testdata entry.
+#[test]
+fn ouroboros_attestation_verifies() {
+    verify_full_path(&load("tdx_ouroboros.cbor"), Platform::Tdx);
+}
+
 #[test]
 fn all_three_platforms_share_no_cross_contamination() {
     // Sanity: each platform's bytes decode to its own platform
