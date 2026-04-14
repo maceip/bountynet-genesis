@@ -156,6 +156,7 @@ pub fn serve_vsock(attestation_json: &str) -> Result<()> {
 ///
 /// Routes:
 ///   GET  /                → attestation JSON (static, from boot)
+///   GET  /eat             → EAT token CBOR bytes (application/eat+cbor)
 ///   GET  /kms-attestation → fresh attestation document (< 5 min old, for KMS)
 ///   POST /kms-unwrap      → decrypt CiphertextForRecipient with enclave RSA key
 ///   POST /tls-cert        → hot-swap TLS certificate (PEM cert + key, for ACME)
@@ -163,17 +164,20 @@ pub fn serve_vsock(attestation_json: &str) -> Result<()> {
 pub fn serve_tls_vsock(
     tls_config: std::sync::Arc<rustls::ServerConfig>,
     attestation_json: &str,
+    eat_cbor: &[u8],
     kms_private_key: Option<Vec<u8>>,
     #[cfg(feature = "nitro")] kms_state: Option<std::sync::Arc<KmsState>>,
 ) -> Result<()> {
     let fd = create_vsock_listener()?;
     let kms_key = std::sync::Arc::new(kms_private_key);
+    let eat_bytes = std::sync::Arc::new(eat_cbor.to_vec());
     // Hot-swappable TLS config — ACME updates this after provisioning a real cert
     let live_config: std::sync::Arc<std::sync::RwLock<std::sync::Arc<rustls::ServerConfig>>> =
         std::sync::Arc::new(std::sync::RwLock::new(tls_config));
     #[cfg(feature = "nitro")]
     let kms_state_arc = kms_state;
     eprintln!("[bountynet/vsock] TLS+vsock listening on port {VSOCK_PORT}");
+    eprintln!("[bountynet/vsock] EAT endpoint: GET /eat ({} bytes)", eat_bytes.len());
     if kms_key.is_some() {
         eprintln!("[bountynet/vsock] KMS endpoints: GET /kms-attestation, POST /kms-unwrap");
     }
@@ -191,6 +195,7 @@ pub fn serve_tls_vsock(
         let config = live_config.read().unwrap().clone();
         let live_cfg = live_config.clone();
         let body = attestation_json.to_string();
+        let eat_body = eat_bytes.clone();
         let kms_key = kms_key.clone();
         #[cfg(feature = "nitro")]
         let kms_st = kms_state_arc.clone();
@@ -254,6 +259,25 @@ pub fn serve_tls_vsock(
             let parts: Vec<&str> = first_line.split_whitespace().collect();
             let method = parts.first().copied().unwrap_or("");
             let path = parts.get(1).copied().unwrap_or("/");
+
+            // /eat gets a binary response — everything else stays text.
+            // We split the response path so the CBOR bytes never pass
+            // through the String-based response builder.
+            if method == "GET" && path == "/eat" {
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\n\
+                     Content-Type: application/eat+cbor\r\n\
+                     Content-Length: {}\r\n\
+                     Access-Control-Allow-Origin: *\r\n\
+                     \r\n",
+                    eat_body.len()
+                );
+                let _ = tls.write_all(header.as_bytes());
+                let _ = tls.write_all(&eat_body);
+                let _ = tls.conn.send_close_notify();
+                let _ = tls.flush();
+                return;
+            }
 
             let response = match (method, path) {
                 #[cfg(feature = "nitro")]

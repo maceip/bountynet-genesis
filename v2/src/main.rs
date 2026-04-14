@@ -30,8 +30,10 @@
 //!   4. Optionally verifies CT against a git repo
 //!   5. Optionally verifies A against a local artifact
 
+mod eat;
 mod net;
 mod quote;
+mod registry;
 mod tee;
 
 use sha2::{Digest, Sha256, Sha384};
@@ -49,6 +51,7 @@ fn main() -> anyhow::Result<()> {
     match args[1].as_str() {
         "build" => cmd_build(&args[2..]),
         "verify" => cmd_verify(&args[2..]),
+        "check" => cmd_check(&args[2..]),
         "enclave" => cmd_enclave(&args[2..]),
         "proxy" => cmd_proxy(&args[2..]),
         "run" => {
@@ -79,7 +82,7 @@ fn print_usage() {
     eprintln!("Usage:");
     eprintln!("  bountynet build   <source-dir> [--cmd \"...\"] [--output ./out]");
     eprintln!("  bountynet verify  <attestation.json> [--source-dir <dir>] [--artifact <path>]");
-    eprintln!("  bountynet verify  --remote https://<domain>  (fetch + verify from running enclave)");
+    eprintln!("  bountynet check   https://<domain>   (fetch + verify from a running enclave)");
     eprintln!("  bountynet run     <dir> --attestation <attestation.json> [--cmd \"...\"]");
     eprintln!("  bountynet enclave <source-dir> [--cmd \"...\"]  (Nitro: build+serve in one)");
     eprintln!("  bountynet proxy   --cid <enclave-cid> [--acme]  (parent: TCP:443 → vsock + ACME)");
@@ -366,34 +369,51 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
     eprintln!("[bountynet] X = {}", hex::encode(value_x));
 
     // --- Step 6: Collect TEE quote ---
-    // Bind (CT, A, X) into report_data.
-    // report_data[0..32] = sha256(CT || A || X) — the binding
-    // report_data[32..64] = X[0..32] — Value X prefix for extraction
     //
-    // INVARIANT.md check #3: "The pubkey in the quote was generated inside the TEE."
-    // Here we don't use a separate signing key — the quote itself IS the attestation.
-    // The TEE hardware signs it. No intermediary ed25519 key needed.
-    // Bind (CT, DT, A, X) into report_data.
-    // DT is included when present — dependencies are part of the proof.
-    let mut binding_input = Vec::with_capacity(48 * 4 + 32);
-    binding_input.extend_from_slice(&ct);
-    if let Some(ref dt_hash) = dt {
-        binding_input.extend_from_slice(dt_hash);
-    }
-    binding_input.extend_from_slice(&a);
-    binding_input.extend_from_slice(&value_x);
+    // Build a PARTIAL EAT first (no platform_quote, no platform_measurement),
+    // then use its `binding_bytes()` as `report_data[0..32]` when collecting
+    // the quote. This way the stored EAT's `binding_bytes()` will recompute
+    // to the exact bytes in the quote's report_data — the verifier can
+    // re-derive the binding from the EAT's claims alone.
+    //
+    // Before this change, cmd_build used a legacy `sha256(CT || DT || A || X)`
+    // binding that DIDN'T match what `EatToken::binding_bytes()` would
+    // compute for the same EAT. That meant every stage 0 attestation was
+    // internally inconsistent and stage 1 chain verification failed with
+    // "reportdata binding mismatch" — caught on real TDX hardware 2026-04-14.
+    //
+    // INVARIANT.md check #3: the quote itself IS the attestation; there is
+    // no separate app-level signing key. The TEE hardware signs report_data,
+    // which commits to every field in the EAT via binding_bytes().
+    let mut eat = eat::EatToken::from_build(eat::BuildComponents {
+        platform: tee_provider.platform(),
+        value_x,
+        source_hash: ct,
+        artifact_hash: a,
+        platform_measurement: Vec::new(), // filled after quote collection
+        platform_quote: Vec::new(),       // filled after quote collection
+    });
+    // Stage 0 has no TLS key binding (no attested-TLS serving at build time);
+    // tls_spki_hash stays zero, which is still committed in binding_bytes.
+    // If a build-time caller wants to bind a TLS key (e.g., cmd_enclave),
+    // they set it before collecting the quote.
 
-    // NitroTPM linking: on SNP, collect NitroTPM attestation and bind into REPORT_DATA.
-    // Prefers a signed attestation document (COSE_Sign1, Nitro Hypervisor-signed);
-    // falls back to sysfs PCR reading if the attestation tool isn't installed.
-    // This cryptographically links the kernel measurement (Nitro trust domain)
-    // to the SNP attestation (AMD trust domain).
+    let binding: [u8; 32] = eat.binding_bytes();
+    eprintln!("[bountynet] EAT binding: {}", hex::encode(binding));
+
+    let mut report_data = [0u8; 64];
+    report_data[..32].copy_from_slice(&binding);
+    report_data[32..64].copy_from_slice(&value_x[..32]);
+
+    // NitroTPM linking: on SNP, collect NitroTPM attestation for kernel
+    // measurement. Currently the TPM digest is recorded in the attestation
+    // output but NOT mixed into `binding` (the EAT schema doesn't have a
+    // dedicated field for it yet). Follow-up: add `tpm_digest: Option<[u8;32]>`
+    // to EatToken and include it in binding_bytes.
     let tpm_attestation: Option<tee::tpm::TpmAttestation> =
         if tee_provider.platform() == quote::Platform::SevSnp && tee::tpm::tpm_available() {
-            // Use the binding hash as nonce for freshness
             match tee::tpm::collect_tpm_attestation(&binding) {
                 Ok(att) => {
-                    binding_input.extend_from_slice(&att.digest);
                     eprintln!("[bountynet] NitroTPM: {} ", att.method);
                     eprintln!("[bountynet] NitroTPM digest: {}", hex::encode(att.digest));
                     for (i, pcr) in att.pcrs.iter().enumerate() {
@@ -410,12 +430,6 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
             None
         };
 
-    let binding: [u8; 32] = Sha256::digest(&binding_input).into();
-
-    let mut report_data = [0u8; 64];
-    report_data[..32].copy_from_slice(&binding);
-    report_data[32..64].copy_from_slice(&value_x[..32]);
-
     eprintln!("[bountynet] Collecting TEE attestation...");
     let evidence = tee_provider.collect_evidence(&report_data)?;
     eprintln!(
@@ -424,7 +438,7 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
         evidence.platform
     );
 
-    // --- Step 7: Extract platform measurement from raw quote ---
+    // --- Step 7: Extract platform measurement + fill the EAT ---
     // LATTE L1: the platform measurement is a top-level field, not buried in bytes.
     // This is what the verifier checks to confirm the builder code is genuine.
     let platform_measurement = extract_platform_measurement(
@@ -436,6 +450,18 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
     } else {
         eprintln!("[bountynet] WARNING: could not extract platform measurement from quote");
     }
+
+    // Fill the EAT with the collected quote + measurement.
+    // binding_bytes() MUST still equal `binding` after this (platform_quote
+    // and platform_measurement are excluded from the hash).
+    eat.platform = eat::platform_to_u8(evidence.platform);
+    eat.platform_quote = evidence.raw_quote.clone();
+    eat.platform_measurement = platform_measurement.clone().unwrap_or_default();
+    debug_assert_eq!(
+        eat.binding_bytes(),
+        binding,
+        "cmd_build: EAT binding changed after filling quote — schema bug"
+    );
 
     // --- Step 8: Write output ---
     std::fs::create_dir_all(&output_dir)?;
@@ -525,7 +551,7 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
         "version": 2,
         "stage": 0,
         "platform": platform_str,
-        "platform_measurement": platform_measurement.map(|m| hex::encode(m)),
+        "platform_measurement": platform_measurement.as_ref().map(|m| hex::encode(m)),
         "source_hash": hex::encode(ct),
         "dependency_hash": dt.map(|d| hex::encode(d)),
         "artifact_hash": hex::encode(a),
@@ -550,6 +576,20 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
 
     let att_path = output_dir.join("attestation.json");
     std::fs::write(&att_path, serde_json::to_string_pretty(&attestation)?)?;
+
+    // Emit EAT (CBOR) alongside the JSON. This is the canonical wire
+    // format per DESIGN.md; the JSON is kept for human debugging and
+    // legacy clients. The EAT was built at step 6 and filled here —
+    // its `binding_bytes()` IS what's in `report_data[0..32]` of the
+    // quote, so it's self-verifying.
+    let eat_cbor = eat.to_cbor()?;
+    let eat_path = output_dir.join("attestation.cbor");
+    std::fs::write(&eat_path, &eat_cbor)?;
+    eprintln!(
+        "[bountynet] EAT (CBOR): {} bytes → {}",
+        eat_cbor.len(),
+        eat_path.display()
+    );
 
     // Copy artifact (if it exists as a file)
     if artifact_path.is_file() {
@@ -594,18 +634,348 @@ fn cmd_build(args: &[String]) -> anyhow::Result<()> {
 // VERIFY — anyone can run this, no TEE needed
 // ============================================================================
 
+/// `bountynet check https://<domain>`
+///
+/// Performs a full attested-TLS verification against a live enclave:
+///
+/// 1. TLS handshake with the server. The cert is self-signed or
+///    unknown-CA — we intentionally accept it because we're going to
+///    authenticate it by attestation, not by CA chain.
+/// 2. Pull the leaf cert out of the rustls session.
+/// 3. Extract the EAT CBOR from the CMW extension (OID 2.23.133.5.4.9).
+/// 4. Decode the EAT.
+/// 5. Recompute `binding_bytes()` from the decoded claims, check that
+///    it matches `report_data[0..32]` inside the embedded platform quote.
+/// 6. Recompute `sha256(cert_spki)` and check it matches
+///    `eat.tls_spki_hash` — this is the channel-binding check that
+///    makes it attested-TLS instead of "attestation over TLS."
+/// 7. Verify the platform quote's signature chain against the pinned
+///    hardware root CA (AMD/Intel/Nitro).
+/// 8. Look up Value X in the registry and report its status.
+///
+/// Every step is required. A verifier that skips (6) is running
+/// "attestation over TLS," which doesn't defend against relay / MITM.
+fn cmd_check(args: &[String]) -> anyhow::Result<()> {
+    let url = args.iter().find(|a| !a.starts_with("--"))
+        .ok_or_else(|| anyhow::anyhow!("Usage: bountynet check https://<domain>"))?;
+
+    // Parse out host + port
+    let stripped = url.strip_prefix("https://").unwrap_or(url.as_str());
+    let (host, port) = match stripped.split_once('/') {
+        Some((hp, _)) => hp,
+        None => stripped,
+    }
+    .split_once(':')
+    .map(|(h, p)| (h.to_string(), p.parse::<u16>().unwrap_or(443)))
+    .unwrap_or_else(|| (stripped.split('/').next().unwrap().to_string(), 443));
+
+    eprintln!("[bountynet] === attested-TLS check ===");
+    eprintln!("[bountynet] Target: {host}:{port}");
+
+    // Install ring crypto provider if not already
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    // TLS client config that accepts any cert. Authentication is by
+    // attestation, not CA chain.
+    let client_config = build_unchecked_client_config();
+
+    let server_name = rustls::pki_types::ServerName::try_from(host.clone())
+        .map_err(|e| anyhow::anyhow!("invalid server name {host}: {e}"))?;
+
+    let mut conn = rustls::ClientConnection::new(Arc::new(client_config), server_name)
+        .map_err(|e| anyhow::anyhow!("rustls client: {e}"))?;
+    let mut sock = std::net::TcpStream::connect((host.as_str(), port))
+        .map_err(|e| anyhow::anyhow!("tcp connect {host}:{port}: {e}"))?;
+
+    let mut tls = rustls::Stream::new(&mut conn, &mut sock);
+
+    // Fire an HTTP GET to /eat so the server actually sends data —
+    // rustls completes the handshake lazily on first read/write.
+    use std::io::{Read, Write};
+    let req = format!("GET /eat HTTP/1.1\r\nHost: {host}\r\nAccept: application/eat+cbor\r\nConnection: close\r\n\r\n");
+    tls.write_all(req.as_bytes())
+        .map_err(|e| anyhow::anyhow!("TLS write: {e}"))?;
+
+    // Drain response (we don't need the body — we'll pull the EAT from the cert)
+    let mut resp = Vec::new();
+    let _ = tls.read_to_end(&mut resp);
+
+    // Now the handshake is done, pull the peer certificate chain
+    let certs = conn
+        .peer_certificates()
+        .ok_or_else(|| anyhow::anyhow!("peer presented no certificates"))?;
+    let leaf = certs
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("empty peer cert chain"))?;
+    let leaf_der = leaf.as_ref().to_vec();
+    eprintln!("[bountynet] Leaf cert: {} bytes DER", leaf_der.len());
+
+    // Extract the CMW extension
+    let eat_cbor = net::attested_tls::extract_eat_from_cert(&leaf_der)?
+        .ok_or_else(|| anyhow::anyhow!(
+            "cert has no CMW extension (OID 2.23.133.5.4.9) — \
+             this endpoint is not attested-TLS aware"
+        ))?;
+    eprintln!("[bountynet] EAT extension: {} bytes", eat_cbor.len());
+
+    // Decode
+    let eat = eat::EatToken::from_cbor(&eat_cbor)
+        .map_err(|e| anyhow::anyhow!("EAT decode: {e}"))?;
+    eprintln!("[bountynet] EAT profile: {}", eat.eat_profile);
+    eprintln!("[bountynet] Platform:    {:?}", eat.platform_enum());
+    eprintln!("[bountynet] Value X:     {}", hex::encode(eat.value_x));
+
+    let platform = eat.platform_enum()
+        .ok_or_else(|| anyhow::anyhow!("unknown platform discriminant: {}", eat.platform))?;
+
+    // --- Check: cert SPKI hash matches eat.tls_spki_hash ---
+    // This is the channel-binding step. If it fails, the cert is
+    // not the one the TEE produced — MITM or relay.
+    let actual_spki_hash = net::attested_tls::spki_hash_of_cert(&leaf_der)?;
+    if actual_spki_hash != eat.tls_spki_hash {
+        eprintln!("[bountynet] SPKI binding:    FAIL");
+        eprintln!("[bountynet]   eat claim:     {}", hex::encode(eat.tls_spki_hash));
+        eprintln!("[bountynet]   cert actual:   {}", hex::encode(actual_spki_hash));
+        anyhow::bail!("attested-TLS channel binding failed");
+    }
+    eprintln!("[bountynet] SPKI binding:    PASS");
+
+    // --- Check: platform quote signature chain + binding ---
+    //
+    // verify_platform_quote does both in one call:
+    //   1. Parses the platform-specific quote format (CBOR for Nitro,
+    //      flat binary for SNP/TDX)
+    //   2. Extracts report_data from the correct location for each
+    //      platform (byte offset for SNP/TDX, CBOR field for Nitro)
+    //   3. Checks the first 32 bytes against `binding`
+    //   4. Verifies the signature chain to the pinned hardware root
+    //
+    // An earlier version of this function did a separate byte-offset
+    // binding pre-check — that was redundant and wrong for Nitro,
+    // whose report_data is a CBOR field, not a byte offset.
+    let binding = eat.binding_bytes();
+    let quote = &eat.platform_quote;
+    eprintln!("[bountynet] Verifying platform quote (binding + signature)...");
+    match quote::verify::verify_platform_quote(platform, quote, &binding) {
+        Ok(measurements) => {
+            eprintln!("[bountynet] Quote binding:   PASS");
+            eprintln!("[bountynet] Quote signature: PASS");
+            for (name, val) in &measurements {
+                eprintln!("[bountynet]   {}: {}", name, hex::encode(val));
+            }
+        }
+        Err(e) => {
+            eprintln!("[bountynet] Quote verify:    FAIL — {e}");
+            anyhow::bail!("platform quote verification failed");
+        }
+    }
+
+    // --- Chain walk (Attestable Containers contribution #6) ---
+    //
+    // If this EAT chains to a previous stage, verify the previous
+    // stage's quote + binding recursively. Value X MUST be stable
+    // across the chain — the runtime is running the code the builder
+    // produced; if Value X changed, something was replaced.
+    //
+    // Channel binding is only checked at the leaf (where the TLS
+    // session actually terminates); previous stages are verified on
+    // their own `binding_bytes()` which does not include a live TLS
+    // key. This is correct: stage 0 never had a TLS session, so its
+    // `tls_spki_hash` is zero and `binding_bytes` commits to that
+    // zero. The chain walk just confirms every signed report_data
+    // matches its respective binding.
+    if eat.has_previous() {
+        let mut cursor = eat.clone();
+        let mut depth = 1usize;
+        while let Some(prev) = cursor.decode_previous()
+            .map_err(|e| anyhow::anyhow!("decode previous: {e}"))?
+        {
+            eprintln!(
+                "[bountynet] Chain step {depth}: verifying previous stage ({} bytes EAT)",
+                cursor.previous_attestation.len()
+            );
+
+            // Value X must be stable across the chain
+            if prev.value_x != eat.value_x {
+                anyhow::bail!(
+                    "Value X drift across chain: leaf={} prev={}",
+                    hex::encode(eat.value_x),
+                    hex::encode(prev.value_x)
+                );
+            }
+
+            // Verify previous's quote (binding + signature) in one call
+            let prev_platform = prev.platform_enum()
+                .ok_or_else(|| anyhow::anyhow!("chain step {depth}: unknown platform"))?;
+            let prev_binding = prev.binding_bytes();
+            match quote::verify::verify_platform_quote(
+                prev_platform,
+                &prev.platform_quote,
+                &prev_binding,
+            ) {
+                Ok(_) => {
+                    eprintln!("[bountynet]   ✓ step {depth} quote verifies (Value X stable)");
+                }
+                Err(e) => {
+                    anyhow::bail!("chain step {depth}: quote signature failed — {e}");
+                }
+            }
+
+            cursor = prev;
+            depth += 1;
+            if depth > 16 {
+                anyhow::bail!("chain too deep (>16 stages) — aborting walk");
+            }
+        }
+        eprintln!("[bountynet] Chain:           PASS ({depth} stage(s) walked)");
+    } else {
+        eprintln!("[bountynet] Chain:           leaf only (no previous stage)");
+    }
+
+    // --- CT log verification (LE path only) ---
+    //
+    // If the leaf cert has SCTs (Signed Certificate Timestamps) embedded,
+    // it was issued by a CA that participates in CT. Verifying the SCTs
+    // tells us the cert is publicly witnessed: a malicious CA can't
+    // silently issue another cert for `<value_x>.aeon.site` without it
+    // showing up in CT logs. See DESIGN.md for why this is the second
+    // half of the structural defense (channel binding closes the
+    // impersonation case; CT closes the rogue-issuance case).
+    //
+    // For self-signed attested-TLS certs (no SCTs), this step is a
+    // no-op. For LE certs in the dual-cert path (step 9), this is the
+    // gate that makes "every boot lands in CT" meaningful.
+    let issuer_der_opt: Option<Vec<u8>> = if certs.len() >= 2 {
+        Some(certs[1].as_ref().to_vec())
+    } else {
+        None
+    };
+
+    match net::ct::extract_scts_from_cert(&leaf_der) {
+        Ok(scts) if scts.is_empty() => {
+            eprintln!("[bountynet] CT (SCTs):       none in cert (self-signed path — expected)");
+        }
+        Ok(scts) => match &issuer_der_opt {
+            Some(issuer_der) => {
+                let report = net::ct::verify_scts_in_cert(&leaf_der, issuer_der)?;
+                if !report.failed.is_empty() {
+                    eprintln!("[bountynet] CT (SCTs):       FAIL");
+                    for f in &report.failed {
+                        eprintln!("[bountynet]   failed: {f}");
+                    }
+                    anyhow::bail!("at least one SCT failed verification");
+                }
+                eprintln!(
+                    "[bountynet] CT (SCTs):       {} verified, {} unpinned (of {} total)",
+                    report.verified.len(),
+                    report.unpinned.len(),
+                    scts.len()
+                );
+                for log in &report.verified {
+                    eprintln!("[bountynet]   ✓ {log}");
+                }
+                if !report.any_verified() {
+                    eprintln!("[bountynet]   WARNING: no SCTs from pinned logs — consider expanding net::ct::PINNED_LOGS");
+                }
+            }
+            None => {
+                eprintln!(
+                    "[bountynet] CT (SCTs):       {} present but issuer cert not in chain — cannot verify",
+                    scts.len()
+                );
+            }
+        },
+        Err(e) => {
+            eprintln!("[bountynet] CT (SCTs):       malformed extension: {e}");
+            anyhow::bail!("SCT extension parse error");
+        }
+    }
+
+    // --- Registry lookup ---
+    let value_x_hex = hex::encode(eat.value_x);
+    match registry::Registry::load_default() {
+        Ok(reg) if !reg.is_empty() => {
+            let lookup = reg.lookup(&value_x_hex);
+            eprintln!("[bountynet] Registry ({} entries): {}", reg.len(), registry::describe(&lookup));
+        }
+        Ok(_) => {
+            eprintln!("[bountynet] Registry: empty (no entries loaded)");
+        }
+        Err(e) => {
+            eprintln!("[bountynet] Registry: load failed — {e}");
+        }
+    }
+
+    eprintln!();
+    eprintln!("[bountynet] === Check Complete ===");
+    eprintln!(
+        "[bountynet] {} is a genuine {:?} TEE running Value X {}",
+        host,
+        platform,
+        &value_x_hex[..16]
+    );
+
+    Ok(())
+}
+
+/// Build a rustls `ClientConfig` that accepts ANY server cert. The
+/// entire point of attested-TLS is that we authenticate by attestation, not
+/// by a CA chain, so a cert that would fail `rustls::webpki` is not
+/// a failure — it's the expected case.
+fn build_unchecked_client_config() -> rustls::ClientConfig {
+    #[derive(Debug)]
+    struct NoVerify;
+    impl rustls::client::danger::ServerCertVerifier for NoVerify {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &rustls::pki_types::CertificateDer<'_>,
+            _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+            _server_name: &rustls::pki_types::ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: rustls::pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls::pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls::pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            vec![
+                rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+                rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+                rustls::SignatureScheme::ED25519,
+                rustls::SignatureScheme::RSA_PSS_SHA256,
+                rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            ]
+        }
+    }
+
+    rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerify))
+        .with_no_client_auth()
+}
+
 fn cmd_verify(args: &[String]) -> anyhow::Result<()> {
     let mut att_path: Option<String> = None;
-    let mut remote_url: Option<String> = None;
     let mut source_dir: Option<PathBuf> = None;
     let mut artifact_path: Option<PathBuf> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--remote" => {
-                i += 1;
-                remote_url = args.get(i).map(|s| s.to_string());
-            }
             "--source-dir" => {
                 i += 1;
                 source_dir = args.get(i).map(|s| PathBuf::from(s));
@@ -623,29 +993,19 @@ fn cmd_verify(args: &[String]) -> anyhow::Result<()> {
         i += 1;
     }
 
-    // Load attestation: from --remote URL or local file
-    let att_json: serde_json::Value = if let Some(url) = &remote_url {
-        eprintln!("[bountynet] Fetching attestation from {url}");
-        let response = reqwest::blocking::Client::builder()
-            .danger_accept_invalid_certs(true) // self-signed cert in enclave
-            .build()?
-            .get(url)
-            .send()
-            .map_err(|e| anyhow::anyhow!("fetch failed: {e}"))?;
-        if !response.status().is_success() {
-            anyhow::bail!("HTTP {}: {}", response.status(), url);
-        }
-        let body = response.text()?;
-        serde_json::from_str(&body)
-            .map_err(|e| anyhow::anyhow!("invalid JSON from {url}: {e}"))?
-    } else if let Some(path) = &att_path {
-        serde_json::from_str(&std::fs::read_to_string(path)?)?
-    } else {
-        anyhow::bail!(
-            "Usage: bountynet verify <attestation.json>\n\
-             \x20      bountynet verify --remote https://<domain>"
-        );
-    };
+    let path = att_path
+        .ok_or_else(|| anyhow::anyhow!("Usage: bountynet verify <attestation.json>"))?;
+    let att_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+
+    verify_attestation_json(&att_json, source_dir.as_deref(), artifact_path.as_deref())
+}
+
+fn verify_attestation_json(
+    att_json: &serde_json::Value,
+    source_dir: Option<&Path>,
+    artifact_path: Option<&Path>,
+) -> anyhow::Result<()> {
 
     let platform_str = att_json["platform"].as_str().unwrap_or("");
     let ct_hex = att_json["source_hash"].as_str().unwrap_or("");
@@ -758,7 +1118,7 @@ fn cmd_verify(args: &[String]) -> anyhow::Result<()> {
     }
 
     // Check 5: Optionally verify CT against source
-    if let Some(ref dir) = source_dir {
+    if let Some(dir) = source_dir {
         eprintln!("[bountynet] Verifying source hash against {}", dir.display());
         let local_ct = compute_tree_hash(dir)?;
         if hex::encode(local_ct) == ct_hex {
@@ -772,7 +1132,7 @@ fn cmd_verify(args: &[String]) -> anyhow::Result<()> {
     }
 
     // Check 6: Optionally verify A against artifact
-    if let Some(ref path) = artifact_path {
+    if let Some(path) = artifact_path {
         eprintln!("[bountynet] Verifying artifact hash against {}", path.display());
         let bytes = std::fs::read(path)?;
         let local_a = hex::encode(Sha384::digest(&bytes));
@@ -781,6 +1141,24 @@ fn cmd_verify(args: &[String]) -> anyhow::Result<()> {
         } else {
             eprintln!("[bountynet] Artifact hash: FAIL");
             std::process::exit(1);
+        }
+    }
+
+    // Check 7: Registry lookup.
+    // The crypto above proves "this Value X was produced inside genuine
+    // hardware." The registry answers "is this Value X approved?"
+    // The two are independent — crypto can pass while status is revoked,
+    // and vice versa. Clients decide policy; we just report.
+    match registry::Registry::load_default() {
+        Ok(reg) if !reg.is_empty() => {
+            let lookup = reg.lookup(x_hex);
+            eprintln!("[bountynet] Registry ({} entries): {}", reg.len(), registry::describe(&lookup));
+        }
+        Ok(_) => {
+            eprintln!("[bountynet] Registry: empty (no entries loaded)");
+        }
+        Err(e) => {
+            eprintln!("[bountynet] Registry: load failed — {e}");
         }
     }
 
@@ -795,24 +1173,43 @@ fn cmd_verify(args: &[String]) -> anyhow::Result<()> {
 // RUN — stage 1: self-verify then execute (AC6 + LATTE L2)
 // ============================================================================
 
+/// Stage 1: the attested runtime.
+///
+/// Implements Attestable Containers contribution #6 (build-to-runtime
+/// chain). Stage 1 boots inside a TEE, loads the stage 0 attestation,
+/// verifies it, re-computes Value X to confirm the runtime files match
+/// what the builder saw, and produces its OWN attested-TLS cert whose
+/// EAT:
+///
+/// - Has the same Value X as stage 0 (LATTE L2: portable identity
+///   unchanged between build and run)
+/// - Has `previous_attestation` set to the stage 0 EAT CBOR bytes
+/// - Has `binding_bytes()` that mixes in `sha256(stage0_cbor)` via
+///   `previous_hash()`, chaining stage 1's quote to stage 0
+/// - Has a fresh stage 1 hardware quote whose `report_data[0..32]`
+///   contains the new binding
+///
+/// A verifier walks the chain: receive stage 1 EAT → verify stage 1
+/// quote → decode `previous_attestation` as stage 0 EAT → verify stage
+/// 0 quote → confirm Value X is stable across both. Every link is a
+/// hash in a hardware-signed report_data. No gaps.
 async fn cmd_run(args: &[String]) -> anyhow::Result<()> {
-    // Parse args
     let mut work_dir: Option<PathBuf> = None;
-    let mut attestation_path: Option<PathBuf> = None;
+    let mut stage0_path: Option<PathBuf> = None;
     let mut run_cmd: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--attestation" => {
                 i += 1;
-                attestation_path = args.get(i).map(|s| PathBuf::from(s));
+                stage0_path = args.get(i).map(PathBuf::from);
             }
             "--cmd" => {
                 i += 1;
                 run_cmd = args.get(i).map(|s| s.to_string());
             }
             _ => {
-                if work_dir.is_none() {
+                if work_dir.is_none() && !args[i].starts_with("--") {
                     work_dir = Some(PathBuf::from(&args[i]));
                 }
             }
@@ -821,82 +1218,97 @@ async fn cmd_run(args: &[String]) -> anyhow::Result<()> {
     }
 
     let work_dir = work_dir.ok_or_else(|| anyhow::anyhow!("working directory required"))?;
-    let attestation_path = attestation_path
-        .ok_or_else(|| anyhow::anyhow!("--attestation <path> required"))?;
+    let stage0_path = stage0_path
+        .ok_or_else(|| anyhow::anyhow!("--attestation <stage0.cbor> required"))?;
 
-    // --- Step 1: Verify TEE ---
-    // Stage 1 must also run inside a TEE.
-    eprintln!("[bountynet] Stage 1: self-verification");
-    eprintln!("[bountynet] Detecting TEE...");
-    let tee_provider = match tee::detect::detect_tee() {
-        Ok(p) => {
-            eprintln!("[bountynet] TEE: {:?}", p.platform());
-            p
+    // --- Step 1: confirm we're running inside a TEE ---
+    eprintln!("[bountynet] === Stage 1: Attested Runtime ===");
+    let tee_provider = tee::detect::detect_tee()
+        .map_err(|e| anyhow::anyhow!("Stage 1 must run inside a TEE: {e}"))?;
+    eprintln!("[bountynet] TEE: {:?}", tee_provider.platform());
+
+    // --- Step 2: load stage 0 EAT (CBOR, canonical format) ---
+    let stage0_cbor = std::fs::read(&stage0_path)
+        .map_err(|e| anyhow::anyhow!("read {}: {e}", stage0_path.display()))?;
+    eprintln!(
+        "[bountynet] Stage 0 EAT: {} bytes from {}",
+        stage0_cbor.len(),
+        stage0_path.display()
+    );
+    let stage0_eat = eat::EatToken::from_cbor(&stage0_cbor)
+        .map_err(|e| anyhow::anyhow!("decode stage 0 EAT: {e}"))?;
+    eprintln!(
+        "[bountynet] Stage 0 Value X: {}",
+        hex::encode(stage0_eat.value_x)
+    );
+
+    // --- Step 3: verify stage 0's quote ---
+    // The producer cannot be trusted; we verify stage 0 at boot.
+    // This is LATTE: the verifier (stage 1 at boot) checks the platform
+    // layer of the previous stage independently before trusting any
+    // of its claims.
+    let stage0_platform = stage0_eat
+        .platform_enum()
+        .ok_or_else(|| anyhow::anyhow!("stage 0 has unknown platform discriminant"))?;
+    let stage0_binding = stage0_eat.binding_bytes();
+    match quote::verify::verify_platform_quote(
+        stage0_platform,
+        &stage0_eat.platform_quote,
+        &stage0_binding,
+    ) {
+        Ok(measurements) => {
+            eprintln!("[bountynet] Stage 0 quote: PASS");
+            for (name, val) in &measurements {
+                eprintln!("[bountynet]   {}: {}", name, hex::encode(val));
+            }
         }
         Err(e) => {
-            eprintln!("[bountynet] TEE detection failed: {e}");
-            anyhow::bail!("Stage 1 must run inside a TEE: {e}");
+            anyhow::bail!(
+                "Stage 1 refuses to boot: stage 0 quote verification failed — {e}"
+            );
         }
-    };
-
-    // --- Step 2: Load stage 0 attestation ---
-    eprintln!("[bountynet] Loading stage 0 attestation: {}", attestation_path.display());
-    let att_contents = std::fs::read_to_string(&attestation_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", attestation_path.display()))?;
-    eprintln!("[bountynet] Attestation loaded: {} bytes", att_contents.len());
-    let att_json: serde_json::Value = serde_json::from_str(&att_contents)
-        .map_err(|e| anyhow::anyhow!("Failed to parse attestation JSON: {e}"))?;
-    eprintln!("[bountynet] Attestation parsed");
-
-    let stage0_x = att_json["value_x"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("attestation missing value_x"))?;
-    let stage0_a = att_json["artifact_hash"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("attestation missing artifact_hash"))?;
-    let stage0_ct = att_json["source_hash"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("attestation missing source_hash"))?;
-
-    eprintln!("[bountynet] Stage 0 attested:");
-    eprintln!("[bountynet]   CT: {stage0_ct}");
-    eprintln!("[bountynet]   A:  {stage0_a}");
-    eprintln!("[bountynet]   X:  {stage0_x}");
-
-    // --- Step 3: Re-compute Value X from current files ---
-    // LATTE L2: verify the portable identity matches what was built.
-    eprintln!("[bountynet] Re-computing Value X from {}...", work_dir.display());
-    let current_x = compute_tree_hash(&work_dir)?;
-    let current_x_hex = hex::encode(current_x);
-    eprintln!("[bountynet] Current X: {current_x_hex}");
-
-    if current_x_hex != stage0_x {
-        eprintln!("[bountynet] FATAL: Value X does not match stage 0 attestation.");
-        eprintln!("[bountynet]   stage 0 attested: {stage0_x}");
-        eprintln!("[bountynet]   current runtime:  {current_x_hex}");
-        eprintln!("[bountynet]   The artifact was modified after the attested build.");
-        eprintln!("[bountynet]   Refusing to run.");
-        std::process::exit(1);
     }
-    eprintln!("[bountynet] Value X: MATCHES stage 0 attestation");
 
-    // --- Step 4: Collect stage 1 TEE quote ---
-    // Bind this runtime to the stage 0 attestation.
-    // report_data[0..32] = sha256(stage0_attestation_hash || current_x)
-    // This chains: stage 0 proved the build, stage 1 proves the runtime.
-    let att_bytes = std::fs::read(&attestation_path)?;
-    let att_hash: [u8; 32] = Sha256::digest(&att_bytes).into();
+    // --- Step 4: re-compute Value X from disk ---
+    // AC ratchet-at-boot: what's on disk now must match what the
+    // builder hashed. If a byte moved, we refuse to run.
+    let current_x = compute_tree_hash(&work_dir)?;
+    if current_x != stage0_eat.value_x {
+        anyhow::bail!(
+            "Value X drift — stage 0 attested {} but disk hashes to {}. Refusing to run.",
+            hex::encode(stage0_eat.value_x),
+            hex::encode(current_x)
+        );
+    }
+    eprintln!("[bountynet] Value X: MATCHES stage 0");
 
-    let mut binding_input = Vec::with_capacity(32 + 48);
-    binding_input.extend_from_slice(&att_hash);
-    binding_input.extend_from_slice(&current_x);
-    let binding: [u8; 32] = Sha256::digest(&binding_input).into();
+    // --- Step 5: generate stage 1 TLS keypair ---
+    // Its SPKI hash goes into the EAT, and the EAT's binding goes
+    // into the quote's report_data. This is what makes stage 1's
+    // TLS session verifiably terminate at this attested runtime.
+    let tls_kp = net::attested_tls::generate_keypair()?;
+    let tls_spki_hash = net::attested_tls::spki_hash_of(&tls_kp);
+
+    // --- Step 6: build the stage 1 EAT, chained to stage 0 ---
+    let mut stage1 = eat::EatToken::from_build(eat::BuildComponents {
+        platform: tee_provider.platform(),
+        value_x: current_x,
+        source_hash: stage0_eat.source_hash,
+        artifact_hash: stage0_eat.artifact_hash,
+        platform_measurement: Vec::new(), // filled after quote collection
+        platform_quote: Vec::new(),       // filled after quote collection
+    });
+    stage1.tls_spki_hash = tls_spki_hash;
+    stage1.set_previous(stage0_cbor);
+
+    let binding = stage1.binding_bytes();
 
     let mut report_data = [0u8; 64];
     report_data[..32].copy_from_slice(&binding);
     report_data[32..64].copy_from_slice(&current_x[..32]);
 
-    eprintln!("[bountynet] Collecting stage 1 TEE quote...");
+    // --- Step 7: collect stage 1 quote ---
+    eprintln!("[bountynet] Collecting stage 1 quote...");
     let evidence = tee_provider.collect_evidence(&report_data)?;
     eprintln!(
         "[bountynet] Stage 1 quote: {} bytes from {:?}",
@@ -904,109 +1316,88 @@ async fn cmd_run(args: &[String]) -> anyhow::Result<()> {
         evidence.platform
     );
 
-    // Extract stage 1 platform measurement
-    let s1_measurement = extract_platform_measurement(
-        &evidence.raw_quote,
-        &evidence.platform,
+    let s1_measurement = extract_platform_measurement(&evidence.raw_quote, &evidence.platform)
+        .unwrap_or_default();
+    stage1.platform_measurement = s1_measurement;
+    stage1.platform_quote = evidence.raw_quote.clone();
+
+    // Invariant: the binding we committed to BEFORE collecting the
+    // quote MUST equal the binding of the filled EAT. If this fires,
+    // there's a bug in binding_bytes that breaks the chain.
+    debug_assert_eq!(
+        stage1.binding_bytes(),
+        binding,
+        "stage 1 binding changed after filling quote/measurement"
     );
-    if let Some(ref m) = s1_measurement {
-        eprintln!("[bountynet] Stage 1 measurement: {}", hex::encode(m));
-    }
 
-    // Write stage 1 attestation
-    let s1_attestation = serde_json::json!({
-        "version": 1,
-        "stage": 1,
-        "platform": format!("{:?}", evidence.platform),
-        "platform_measurement": s1_measurement.map(|m| hex::encode(m)),
-        "value_x": current_x_hex,
-        "stage0_attestation_hash": hex::encode(att_hash),
-        "stage0_source_hash": stage0_ct,
-        "stage0_artifact_hash": stage0_a,
-        "binding": hex::encode(binding),
-        "quote": hex::encode(&evidence.raw_quote),
-        "timestamp": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock")
-            .as_secs(),
-    });
+    let stage1_cbor = stage1
+        .to_cbor()
+        .map_err(|e| anyhow::anyhow!("stage 1 EAT encode: {e}"))?;
 
-    let s1_path = work_dir.join("stage1-attestation.json");
-    std::fs::write(&s1_path, serde_json::to_string_pretty(&s1_attestation)?)?;
+    // --- Step 8: persist the stage 1 attestation ---
+    //
+    // CRITICAL: do NOT write into `work_dir`. `work_dir` is the tree
+    // whose sha384 equals Value X; dropping a new file into it would
+    // make the next run of stage 1 fail Value X re-computation. The
+    // stage 0 attestation file lives in an output directory (produced
+    // by `cmd_build --output`), which is the correct place for runtime
+    // artifacts.
+    let output_dir = stage0_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .to_path_buf();
+    let stage1_path = output_dir.join("stage1-attestation.cbor");
+    std::fs::write(&stage1_path, &stage1_cbor)?;
+    eprintln!(
+        "[bountynet] Stage 1 EAT: {} bytes → {}",
+        stage1_cbor.len(),
+        stage1_path.display()
+    );
 
+    // --- Step 9: build the attested-TLS cert carrying the stage 1 EAT ---
+    let domain = net::acme::domain_from_value_x(&current_x);
+    let attested = net::attested_tls::make_attested_cert(&tls_kp, &domain, &stage1_cbor)?;
+    eprintln!(
+        "[bountynet] Attested-TLS cert built ({} bytes DER) — serving at {}",
+        attested.cert_der.len(),
+        domain
+    );
+
+    // --- Step 10: serve ---
     eprintln!();
     eprintln!("[bountynet] === Stage 1 Verified ===");
-    eprintln!("[bountynet] Value X matches stage 0: {current_x_hex}");
     eprintln!("[bountynet] Chain: source → attested build → attested runtime");
-    eprintln!("[bountynet] Stage 1 attestation: {}", s1_path.display());
+    eprintln!("[bountynet] Value X: {}", hex::encode(current_x));
 
-    // --- Step 5: Start TLS server + provision cert ---
-    let domain = net::acme::domain_from_value_x(&current_x);
-    eprintln!("[bountynet] Domain: {domain}");
+    let tls_state = Arc::new(net::tls::TlsState::new_with_pem(
+        attested.cert_pem.as_bytes(),
+        attested.key_pem.as_bytes(),
+    )?);
+    // HTTP body is a courtesy summary — the actual attestation lives
+    // in the TLS cert extension (attested-TLS path).
+    let summary = format!(
+        "{{\"stage\":1,\"value_x\":\"{}\",\"domain\":\"{}\",\"note\":\"EAT is in TLS cert extension 2.23.133.5.4.9\"}}",
+        hex::encode(current_x),
+        domain
+    );
+    tls_state.set_attestation(summary).await;
 
-    // Start TLS server with self-signed cert (will be replaced after ACME)
-    let attestation_json = serde_json::to_string_pretty(&s1_attestation)?;
+    let state_clone = tls_state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = net::tls::serve(state_clone, 443).await {
+            eprintln!("[bountynet] TLS server error: {e}");
+        }
+    });
+    eprintln!("[bountynet] Attested TLS server started on :443");
 
-    // Detect if we're inside a Nitro Enclave (vsock available, no network)
-    let is_nitro_enclave = std::path::Path::new("/dev/nsm").exists()
-        && !std::path::Path::new("/proc/net/tcp").exists();
-
-    if is_nitro_enclave {
-        // Nitro Enclave: serve over vsock (no network available)
-        eprintln!("[bountynet] Nitro Enclave detected — serving via vsock");
-        eprintln!("[bountynet] Domain: {domain}");
-        let json_for_vsock = attestation_json.clone();
-        std::thread::spawn(move || {
-            if let Err(e) = net::vsock::serve_vsock(&json_for_vsock) {
-                eprintln!("[bountynet] vsock server error: {e}");
-            }
-        });
-    } else {
-        // Normal VM: serve over TLS
-        let tls_state = Arc::new(
-            net::tls::TlsState::new_self_signed(&domain)?
-        );
-        tls_state.set_attestation(attestation_json.clone()).await;
-
-        let tls_state_clone = tls_state.clone();
-        tokio::spawn(async move {
-            if let Err(e) = net::tls::serve(tls_state_clone, 443).await {
-                eprintln!("[bountynet] TLS server error: {e}");
-            }
-        });
-
-        eprintln!("[bountynet] TLS server started on :443");
-        eprintln!("[bountynet] Attestation available at: https://{domain}");
-
-        // ACME cert provisioning in background (for non-enclave TLS servers)
-        let domain_for_acme = domain.clone();
-        tokio::spawn(async move {
-            match net::acme::provision_cert_for_enclave(
-                &domain_for_acme,
-                "https://127.0.0.1:443",
-                true, // staging for now
-            ).await {
-                Ok(()) => {
-                    eprintln!("[bountynet/acme] Let's Encrypt cert installed");
-                }
-                Err(e) => {
-                    eprintln!("[bountynet/acme] Cert provisioning failed: {e}");
-                    eprintln!("[bountynet/acme] Continuing with self-signed cert");
-                }
-            }
-        });
-    }
-
-    // (ACME provisioning is inside the TLS branch above)
-
-    // --- Step 6: Execute the workload ---
+    // --- Step 11: execute workload if provided ---
     if let Some(cmd) = run_cmd {
         eprintln!("[bountynet] Running: {cmd}");
         let status = std::process::Command::new("sh")
             .arg("-c")
             .arg(&cmd)
             .current_dir(&work_dir)
-            .env("BOUNTYNET_VALUE_X", &current_x_hex)
+            .env("BOUNTYNET_VALUE_X", hex::encode(current_x))
             .env("BOUNTYNET_DOMAIN", &domain)
             .env("BOUNTYNET_STAGE", "1")
             .status()?;
@@ -1091,11 +1482,41 @@ fn cmd_enclave(args: &[String]) -> anyhow::Result<()> {
     let value_x = compute_tree_hash(&frozen_source)?;
     eprintln!("[bountynet] X = {}", hex::encode(value_x));
 
-    // Collect quote — using the same tee_provider (single NSM init)
-    let mut binding_input = Vec::with_capacity(48 * 2);
-    binding_input.extend_from_slice(&ct);
-    binding_input.extend_from_slice(&value_x);
-    let binding: [u8; 32] = Sha256::digest(&binding_input).into();
+    // --- Attested TLS: generate TLS keypair BEFORE quote collection ---
+    //
+    // The TLS key is the channel binding anchor. Its SPKI hash goes
+    // into the EAT, the EAT's binding_bytes goes into the quote's
+    // report_data, and the quote goes back into the EAT inside the
+    // cert extension. A verifier who completes the TLS handshake and
+    // checks that sha256(leaf_cert_spki) matches eat.tls_spki_hash
+    // knows that the cert *belongs* to the attested TEE — no MITM,
+    // no relay. See net::attested_tls for the full chain description.
+    eprintln!("[bountynet] Generating attested-TLS keypair inside enclave");
+    let tls_kp = net::attested_tls::generate_keypair()?;
+    let tls_spki_hash = net::attested_tls::spki_hash_of(&tls_kp);
+    eprintln!("[bountynet] TLS SPKI sha256: {}", hex::encode(tls_spki_hash));
+
+    // Provisional EAT: same fields as the final one EXCEPT
+    // platform_quote is empty. binding_bytes() is defined to exclude
+    // platform_quote (chicken and egg — report_data lives inside it),
+    // so the binding computed here matches the binding the verifier
+    // recomputes later from the finalized token.
+    // We need an artifact hash here for the EAT; cmd_enclave builds
+    // into a tempdir so there's no single output artifact. Use the
+    // hash of the build output tree as a stable stand-in.
+    let artifact_hash = compute_tree_hash(&build_output).unwrap_or([0u8; 48]);
+    let mut eat_partial = eat::EatToken::from_build(eat::BuildComponents {
+        platform: tee_provider.platform(),
+        value_x,
+        source_hash: ct,
+        artifact_hash,
+        platform_measurement: Vec::new(), // filled after quote collection
+        platform_quote: Vec::new(),       // filled after quote collection
+    });
+    eat_partial.tls_spki_hash = tls_spki_hash;
+
+    let binding: [u8; 32] = eat_partial.binding_bytes();
+    eprintln!("[bountynet] EAT binding: {}", hex::encode(binding));
 
     let mut report_data = [0u8; 64];
     report_data[..32].copy_from_slice(&binding);
@@ -1103,6 +1524,30 @@ fn cmd_enclave(args: &[String]) -> anyhow::Result<()> {
 
     let evidence = tee_provider.collect_evidence(&report_data)?;
     eprintln!("[bountynet] Quote: {} bytes from {:?}", evidence.raw_quote.len(), evidence.platform);
+
+    // Finalize the EAT with the collected quote + measurement
+    let platform_measurement = extract_platform_measurement(
+        &evidence.raw_quote,
+        &evidence.platform,
+    ).unwrap_or_default();
+    let mut eat = eat_partial;
+    eat.platform_measurement = platform_measurement;
+    eat.platform_quote = evidence.raw_quote.clone();
+
+    // Sanity: binding_bytes() MUST still equal `binding` after
+    // assignment, because binding_bytes excludes platform_quote AND
+    // platform_measurement. If this ever fires, the EAT schema has
+    // drifted in a way that breaks channel binding.
+    debug_assert_eq!(
+        eat.binding_bytes(),
+        binding,
+        "attested-TLS binding invariant violated: binding_bytes changed after finalization"
+    );
+
+    // NOTE: platform_measurement is NOT in binding_bytes today, because
+    // it's derivable from platform_quote by the verifier. If we ever
+    // want to bind it as a separate first-class field, it needs to be
+    // included in the pre-quote hash and the flow reordered further.
 
     // Stash RSA keys for KMS (Nitro only)
     let kms_private_key = evidence.kms_private_key.clone();
@@ -1172,6 +1617,11 @@ fn cmd_enclave(args: &[String]) -> anyhow::Result<()> {
 
     let attestation_json = serde_json::to_string_pretty(&attestation)?;
 
+    // Serialize the FINAL EAT (with quote populated) to CBOR.
+    // This is what goes into the CMW cert extension AND what /eat serves.
+    let eat_cbor = eat.to_cbor()?;
+    eprintln!("[bountynet] EAT (CBOR): {} bytes — embedded in attested-TLS cert + served at /eat", eat_cbor.len());
+
     eprintln!("[bountynet] === Enclave Ready ===");
     eprintln!("[bountynet] Value X: {}", hex::encode(value_x));
     eprintln!("[bountynet] Domain: {domain}");
@@ -1184,13 +1634,18 @@ fn cmd_enclave(args: &[String]) -> anyhow::Result<()> {
 
     match rustls::crypto::ring::default_provider().install_default() {
         Ok(_) => {
+            // attested-TLS cert: the enclave-generated keypair + self-signed cert
+            // + EAT CBOR as a critical extension. Reusing the same keypair
+            // whose SPKI hash is in eat.tls_spki_hash is the whole point.
             let tls_config = {
-                let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-                let params = rcgen::CertificateParams::new(vec![domain.clone()])?;
-                let cert = params.self_signed(&key_pair)?;
+                let ac = net::attested_tls::make_attested_cert(&tls_kp, &domain, &eat_cbor)?;
+                eprintln!(
+                    "[bountynet] attested-TLS cert built ({} bytes DER, EAT extension marked critical)",
+                    ac.cert_der.len()
+                );
                 net::tls::make_server_config(
-                    cert.pem().as_bytes(),
-                    key_pair.serialize_pem().as_bytes(),
+                    ac.cert_pem.as_bytes(),
+                    ac.key_pem.as_bytes(),
                 )?
             };
             eprintln!("[bountynet] TLS on vsock (inside enclave)");
@@ -1199,13 +1654,14 @@ fn cmd_enclave(args: &[String]) -> anyhow::Result<()> {
                 net::vsock::serve_tls_vsock(
                     Arc::new(tls_config),
                     &attestation_json,
+                    &eat_cbor,
                     kms_private_key,
                     kms_state,
                 )?;
             }
             #[cfg(not(feature = "nitro"))]
             {
-                net::vsock::serve_tls_vsock(Arc::new(tls_config), &attestation_json, kms_private_key)?;
+                net::vsock::serve_tls_vsock(Arc::new(tls_config), &attestation_json, &eat_cbor, kms_private_key)?;
             }
         }
         Err(_) => {

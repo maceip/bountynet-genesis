@@ -39,6 +39,20 @@ impl TlsState {
         })
     }
 
+    /// Create with a pre-built cert — used for the attested-TLS path
+    /// where the cert carries the EAT CBOR as an extension and the
+    /// SPKI hash is already bound into the quote's report_data.
+    /// Caller is responsible for having generated the keypair and
+    /// built the cert via `net::attested_tls::make_attested_cert`.
+    pub fn new_with_pem(cert_pem: &[u8], key_pem: &[u8]) -> Result<Self> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let config = make_server_config(cert_pem, key_pem)?;
+        Ok(Self {
+            config: RwLock::new(Arc::new(config)),
+            attestation_json: RwLock::new("{}".to_string()),
+        })
+    }
+
     /// Update the cert (after ACME provisioning completes).
     pub async fn set_cert(&self, cert_pem: &[u8], key_pem: &[u8]) -> Result<()> {
         let config = make_server_config(cert_pem, key_pem)?;
