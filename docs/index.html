@@ -9,6 +9,10 @@
 </head>
 <body>
 
+<!-- Background Value X watermark — faint hex-dump lineage strings
+     tiled behind the content. Aria-hidden because it's decorative. -->
+<div class="vx-watermark" aria-hidden="true"></div>
+
 <div class="page">
 
   <!-- ===== HERO ===== -->
@@ -61,7 +65,7 @@ something you can verify right now, in this tab, in under 60 seconds.
   <dialog class="cs-dialog" open>
     <form method="dialog" onsubmit="event.preventDefault()">
       <div class="heading">
-        <div class="wrapper"><div class="icon"></div><p class="text">platform_status.log</p></div>
+        <div class="wrapper"><div class="icon"></div><span class="text">platform_status.log</span></div>
       </div>
       <div class="content">
 
@@ -113,18 +117,34 @@ or verifier surfaces in CI before a hardware run is needed.
   <dialog class="cs-dialog" open id="live">
     <form method="dialog" onsubmit="event.preventDefault()">
       <div class="heading">
-        <div class="wrapper"><div class="icon"></div><p class="text">live_attestation.exe // verify it yourself</p></div>
+        <div class="wrapper"><div class="icon"></div><span class="text">live_attestation.exe // verify it yourself</span></div>
       </div>
       <div class="content">
 
 <p>
 On <strong>2026-04-14 12:40 UTC</strong>, a GitHub Actions workflow triggered
 itself on our self-hosted GCP TDX runner, built <code>v2/</code> inside the
-TEE, and produced a hardware-signed Value X of
-<code>58b663bbb60a906f29a2e5141c67a4a163271a9af24304e282bdbbbb8fb94fa5bc337dda323d37e7f78f429bcf80810c</code>.
-That attestation is committed byte-identically at
+TEE, and produced a hardware-signed Value X. That attestation is committed
+byte-identically at
 <a href="https://github.com/maceip/bountynet-genesis/blob/main/v2/testdata/chain/tdx_ouroboros.cbor">v2/testdata/chain/tdx_ouroboros.cbor</a>.
+The live endpoint on the same TDX runner currently serves a different Value X
+for the current <code>main</code> HEAD — both are real, both chain to Intel's
+root CA, both are below.
 </p>
+
+<div class="vx-lineage">
+  <div class="vx-chip">
+    <span class="vx-label">archive // commit 2593db6</span>
+    <code class="vx-hex" id="vx-archive">58b663bbb60a906f29a2e5141c67a4a163271a9af24304e282bdbbbb8fb94fa5bc337dda323d37e7f78f429bcf80810c</code>
+    <button class="vx-copy" data-copy-target="vx-archive" aria-label="copy archive Value X">copy</button>
+  </div>
+  <div class="vx-arrow">&darr;</div>
+  <div class="vx-chip vx-chip-live">
+    <span class="vx-label"><span class="live-dot"></span>live // commit 8dd008e (main)</span>
+    <code class="vx-hex" id="vx-live">f44f87e6f0965493ac6822dd89b155cb82758d6898751196f7892d12684fc49594fa3a8d7dc548d8496fe17597a32c20</code>
+    <button class="vx-copy" data-copy-target="vx-live" aria-label="copy live Value X">copy</button>
+  </div>
+</div>
 
 <p>
 Three ways to verify it, in order of how much effort each takes:
@@ -262,7 +282,7 @@ AMD, and AWS roots) is a week of work. Today this widget proves the
   <dialog class="cs-dialog" open id="get-started">
     <form method="dialog" onsubmit="event.preventDefault()">
       <div class="heading">
-        <div class="wrapper"><div class="icon"></div><p class="text">get_started.sh // two paths</p></div>
+        <div class="wrapper"><div class="icon"></div><span class="text">get_started.sh // two paths</span></div>
       </div>
       <div class="content">
 
@@ -336,7 +356,7 @@ TEE host — we deliberately scope the runner to a single repository.
   <dialog class="cs-dialog" open id="kms">
     <form method="dialog" onsubmit="event.preventDefault()">
       <div class="heading">
-        <div class="wrapper"><div class="icon"></div><p class="text">real_world.kms // secrets that only unlock inside the right code</p></div>
+        <div class="wrapper"><div class="icon"></div><span class="text">real_world.kms // secrets that only unlock inside the right code</span></div>
       </div>
       <div class="content">
 
@@ -419,7 +439,7 @@ under "bountynet-gate" in DESIGN.md.
 
   <details class="cs-dialog" id="invariant">
     <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><p class="text">invariant.md // the three checks</p></div>
+      <div class="wrapper"><div class="icon"></div><span class="text">invariant.md // the three checks</span></div>
     </summary>
     <div class="content">
 
@@ -455,7 +475,7 @@ environment, not a proxy — this is channel binding.
 
   <details class="cs-dialog" id="flow">
     <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><p class="text">stage 0 &rarr; stage 1 chain</p></div>
+      <div class="wrapper"><div class="icon"></div><span class="text">stage 0 &rarr; stage 1 chain</span></div>
     </summary>
     <div class="content">
 
@@ -512,7 +532,7 @@ changes report_data, which fails the vendor's signature check.
 
   <details class="cs-dialog">
     <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><p class="text">EAT token schema</p></div>
+      <div class="wrapper"><div class="icon"></div><span class="text">EAT token schema</span></div>
     </summary>
     <div class="content">
 
@@ -555,7 +575,7 @@ previous_hash() = sha256(previous_attestation)   // or zeros for root
 
   <details class="cs-dialog" id="ouroboros">
     <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><p class="text">ouroboros.sh // CI builds itself</p></div>
+      <div class="wrapper"><div class="icon"></div><span class="text">ouroboros.sh // CI builds itself</span></div>
     </summary>
     <div class="content">
 
@@ -603,7 +623,7 @@ commit <code>2593db6</code>, 2026-04-14 12:40 UTC.
 
   <details class="cs-dialog">
     <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><p class="text">trust anchors // three independent vendors</p></div>
+      <div class="wrapper"><div class="icon"></div><span class="text">trust anchors // three independent vendors</span></div>
     </summary>
     <div class="content">
 
@@ -643,7 +663,7 @@ vendors.
 
   <details class="cs-dialog">
     <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><p class="text">standards.txt</p></div>
+      <div class="wrapper"><div class="icon"></div><span class="text">standards.txt</span></div>
     </summary>
     <div class="content">
 
@@ -680,7 +700,7 @@ vendors.
 
   <details class="cs-dialog">
     <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><p class="text">quick_start.sh</p></div>
+      <div class="wrapper"><div class="icon"></div><span class="text">quick_start.sh</span></div>
     </summary>
     <div class="content">
 
@@ -708,7 +728,7 @@ $ ./target/release/bountynet check https://&lt;domain&gt;/</pre>
   <dialog class="cs-dialog" open>
     <form method="dialog" onsubmit="event.preventDefault()">
       <div class="heading">
-        <div class="wrapper"><div class="icon"></div><p class="text">readme.txt</p></div>
+        <div class="wrapper"><div class="icon"></div><span class="text">readme.txt</span></div>
       </div>
       <div class="content">
 <p>
@@ -766,6 +786,66 @@ document.querySelectorAll('details.cs-dialog').forEach(function(d) {
     }
   }, { once: false });
 });
+</script>
+<script>
+// Copy-to-clipboard for .vx-copy buttons. Uses navigator.clipboard when
+// available (all modern browsers over HTTPS), falls back to a temporary
+// textarea + document.execCommand('copy') for ancient environments.
+document.addEventListener('click', function(ev) {
+  var btn = ev.target.closest('.vx-copy');
+  if (!btn) return;
+  ev.preventDefault();
+  var targetId = btn.getAttribute('data-copy-target');
+  var el = document.getElementById(targetId);
+  if (!el) return;
+  var text = el.textContent.trim();
+  var done = function() {
+    var orig = btn.textContent;
+    btn.textContent = 'copied';
+    btn.classList.add('copied');
+    setTimeout(function() {
+      btn.textContent = orig;
+      btn.classList.remove('copied');
+    }, 1200);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, function() {
+      // fallback
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); done(); } catch (_) {}
+      document.body.removeChild(ta);
+    });
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } catch (_) {}
+    document.body.removeChild(ta);
+  }
+});
+
+// Populate the background watermark with Value X hex strings. We generate
+// enough repeats to fill the viewport height regardless of screen size.
+// The strings are rendered as rows of faint monospace characters, each
+// row a complete Value X, tiled both horizontally and vertically.
+(function populateWatermark() {
+  var wm = document.querySelector('.vx-watermark');
+  if (!wm) return;
+  var lineage = [
+    '58b663bbb60a906f29a2e5141c67a4a163271a9af24304e282bdbbbb8fb94fa5bc337dda323d37e7f78f429bcf80810c',
+    'f44f87e6f0965493ac6822dd89b155cb82758d6898751196f7892d12684fc49594fa3a8d7dc548d8496fe17597a32c20',
+  ];
+  var rows = [];
+  var target = Math.ceil(window.innerHeight / 14) + 40;
+  for (var i = 0; i < target; i++) {
+    rows.push(lineage[i % lineage.length] + ' ' + lineage[i % lineage.length]);
+  }
+  wm.textContent = rows.join('\n');
+})();
 </script>
 <script src="assets/verify.js"></script>
 

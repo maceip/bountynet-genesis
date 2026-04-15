@@ -1,5 +1,6 @@
 /* bountynet-genesis docs — cs16.css-flavored layout + mermaid tuning
  * + <details> collapsibles styled like <dialog> + verify widget
+ * + vx-chip copy component + background Value X watermark
  */
 
 @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
@@ -10,6 +11,51 @@ body {
   padding: 0;
   min-height: 100vh;
   font-family: "VT323", "Courier New", monospace;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* =============================================================
+ * Background Value X watermark layer.
+ * Fixed, behind everything, pointer-events disabled, very faint.
+ * Tiled hex strings that slowly scroll — the "lineage" that the
+ * page sits on top of.
+ * ============================================================= */
+.vx-watermark {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  white-space: pre;
+  font-family: "VT323", "Courier New", monospace;
+  font-size: 13px;
+  line-height: 14px;
+  letter-spacing: 0;
+  color: #4c5844;
+  opacity: 0.22;
+  padding: 0;
+  user-select: none;
+  animation: vx-drift 120s linear infinite;
+}
+
+@keyframes vx-drift {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-40%); }
+}
+
+.page {
+  position: relative;
+  z-index: 1;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
 .page {
@@ -120,6 +166,10 @@ details.cs-dialog .content {
   max-height: none !important;
   overflow: visible !important;
   line-height: 1.55;
+  /* Make sure text is always selectable — overrides any cs16 defaults
+     that might set user-select: none on the dialog form. */
+  -webkit-user-select: text !important;
+  user-select: text !important;
 }
 
 .cs-dialog .content h1,
@@ -156,22 +206,28 @@ details.cs-dialog .content p.small {
 
 .cs-dialog .content a,
 details.cs-dialog .content a {
-  color: #8b4513;
+  color: #1d3a6b;
   text-decoration: underline;
+  font-weight: bold;
 }
 
 .cs-dialog .content a:hover,
 details.cs-dialog .content a:hover {
-  color: #c26d2a;
+  color: #2a5598;
+  background: rgba(255, 215, 77, 0.2);
 }
 
 .cs-dialog .content code,
 details.cs-dialog .content code {
-  background: rgba(0, 0, 0, 0.18);
-  padding: 1px 5px;
+  background: #1d2419;
+  padding: 1px 6px;
   border-radius: 2px;
   font-family: "VT323", "Courier New", monospace;
-  color: #2b2e20;
+  color: #ffd74d;
+  font-size: 0.96em;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  word-break: break-all;
 }
 
 .cs-dialog .content pre.code,
@@ -450,6 +506,110 @@ table.cs-table th:last-child {
 .verify-compare code {
   background: rgba(0, 0, 0, 0.4) !important;
   color: #ffd74d !important;
+}
+
+/* =============================================================
+ * Value X lineage chips — copyable hex strings for archive + live
+ * ============================================================= */
+.vx-lineage {
+  margin: 18px 0 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.vx-lineage .vx-arrow {
+  text-align: center;
+  color: #ffd74d;
+  font-size: 1.3em;
+  line-height: 1;
+  margin: 2px 0;
+  text-shadow: 0 0 4px #ffd74d;
+}
+
+.vx-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: #1d2419;
+  border: 2px solid #0f1109;
+  border-top-color: #232b1f;
+  border-left-color: #232b1f;
+  box-shadow: 2px 2px 0 #0f1109;
+  color: #dbe4c9;
+}
+
+.vx-chip .vx-label {
+  font-size: 0.92em;
+  color: #ffd74d;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.vx-chip .vx-label .live-dot {
+  margin-right: 5px;
+}
+
+.vx-chip .vx-hex {
+  font-family: "VT323", "Courier New", monospace;
+  font-size: 1.02em;
+  color: #dbe4c9 !important;
+  background: #0a0c07 !important;
+  padding: 7px 10px !important;
+  border: 1px solid #0f1109;
+  border-radius: 2px;
+  word-break: break-all;
+  white-space: normal;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  cursor: text;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+}
+
+.vx-chip .vx-copy {
+  align-self: flex-end;
+  background: #4c5844;
+  border: 2px solid #0f1109;
+  border-top-color: #6b7c52;
+  border-left-color: #6b7c52;
+  color: #ffd74d;
+  padding: 3px 14px;
+  font-family: "VT323", "Courier New", monospace;
+  font-size: 0.95em;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  box-shadow: 1px 1px 0 #0f1109;
+}
+
+.vx-chip .vx-copy:hover {
+  background: #6b7c52;
+  color: #fff4a3;
+}
+
+.vx-chip .vx-copy:active {
+  border-top-color: #0f1109;
+  border-left-color: #0f1109;
+  border-bottom-color: #6b7c52;
+  border-right-color: #6b7c52;
+  box-shadow: none;
+}
+
+.vx-chip .vx-copy.copied {
+  background: #8fbf6b;
+  color: #1d2419;
+  border-top-color: #c5e49f;
+  border-left-color: #c5e49f;
+}
+
+.vx-chip-live {
+  border-color: #6b7c52;
+  border-top-color: #8fbf6b;
+  border-left-color: #8fbf6b;
+  box-shadow: 2px 2px 0 #0f1109, 0 0 10px rgba(143, 191, 107, 0.25);
 }
 
 /* Pulsing green dot for the LIVE indicator */
