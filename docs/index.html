@@ -11,7 +11,7 @@
 
 <div class="page">
 
-  <!-- ===== HEADER ===== -->
+  <!-- ===== HERO ===== -->
   <dialog class="cs-dialog" open>
     <form method="dialog" onsubmit="event.preventDefault()">
       <div class="heading">
@@ -42,14 +42,15 @@ A proof rooted in hardware that anyone can verify and nobody can argue with.
 
 <p>
 Proven on real silicon across three independent TEE vendors on 2026-04-14.
-The chain is closed on itself: the build runner that produced this binary is
-itself an attested build of this repo.
+The chain is closed on itself: the build runner that produced this binary
+is itself an attested build of this repo. Everything below this point is
+something you can verify right now, in this tab, in under 60 seconds.
 </p>
 
 <menu class="footer-btns">
+  <a href="#live" class="cs-btn">verify it live</a>
   <a href="https://github.com/maceip/bountynet-genesis" class="cs-btn">source on github</a>
-  <a href="#flow" class="cs-btn">how it works</a>
-  <a href="#ouroboros" class="cs-btn">the ouroboros</a>
+  <a href="#get-started" class="cs-btn">use our runner</a>
 </menu>
 
       </div>
@@ -98,21 +99,296 @@ itself an attested build of this repo.
 <p class="small">
 Real attestation bytes from each run are archived in
 <code>v2/testdata/chain/</code> and re-verified on every commit via
-<code>hardware_regression.rs</code>. Any regression in the producer or
-verifier surfaces in CI before a hardware run is needed.
+<code>tests/hardware_regression.rs</code>. Any regression in the producer
+or verifier surfaces in CI before a hardware run is needed.
 </p>
 
       </div>
     </form>
   </dialog>
 
-  <!-- ===== THE THREE CHECKS ===== -->
-  <dialog class="cs-dialog" open id="invariant">
+  <!-- =============================================== -->
+  <!-- ===== #live — LIVE ATTESTATION (the headline) === -->
+  <!-- =============================================== -->
+  <dialog class="cs-dialog" open id="live">
     <form method="dialog" onsubmit="event.preventDefault()">
       <div class="heading">
-        <div class="wrapper"><div class="icon"></div><p class="text">invariant.md // the three checks</p></div>
+        <div class="wrapper"><div class="icon"></div><p class="text">live_attestation.exe // verify it yourself</p></div>
       </div>
       <div class="content">
+
+<p>
+On <strong>2026-04-14 12:40 UTC</strong>, a GitHub Actions workflow triggered
+itself on our self-hosted GCP TDX runner, built <code>v2/</code> inside the
+TEE, and produced a hardware-signed Value X of
+<code>58b663bbb60a906f29a2e5141c67a4a163271a9af24304e282bdbbbb8fb94fa5bc337dda323d37e7f78f429bcf80810c</code>.
+That attestation is committed byte-identically at
+<a href="https://github.com/maceip/bountynet-genesis/blob/main/v2/testdata/chain/tdx_ouroboros.cbor">v2/testdata/chain/tdx_ouroboros.cbor</a>.
+</p>
+
+<p>
+Three ways to verify it, in order of how much effort each takes:
+</p>
+
+<h2 class="inline-h">1. In your browser, right now</h2>
+
+<p class="small">
+This widget walks the <code>v2</code> directory at a given git ref via the
+GitHub tree API, hashes every file with
+<code>crypto.subtle.digest('SHA-384')</code>, and reproduces the exact Value X
+algorithm <code>bountynet build</code> runs on the TDX runner. Pure JS, no
+WASM, no external libraries. Click the button, watch every file stream past,
+and see the 48-byte result.
+</p>
+
+<div id="verifier"
+     data-registered-value-x="58b663bbb60a906f29a2e5141c67a4a163271a9af24304e282bdbbbb8fb94fa5bc337dda323d37e7f78f429bcf80810c"
+     data-registered-commit="2593db6">
+
+  <div class="verify-controls">
+    <label for="verify-path">path</label>
+    <select id="verify-path" class="cs-select">
+      <option value="v2" selected>v2 (full — matches ouroboros)</option>
+      <option value="v2/src">v2/src (quick demo, won't match)</option>
+    </select>
+    <label for="verify-ref">git ref</label>
+    <input id="verify-ref" class="cs-input" type="text" value="2593db6" placeholder="commit / branch / tag">
+    <button id="verify-run" class="cs-btn">compute Value X live</button>
+    <button id="verify-clear" class="cs-btn">clear</button>
+  </div>
+
+  <div class="verify-status">
+    <span class="verify-phase-label">status:</span>
+    <span id="verify-phase">idle</span>
+    <span class="verify-count-sep">//</span>
+    <span id="verify-count">0 files</span>
+  </div>
+
+  <div id="verify-log" class="verify-log"></div>
+
+  <div id="verify-result" class="verify-result" hidden>
+    <div class="verify-result-label">computed Value X (sha384, 48 bytes):</div>
+    <div id="verify-result-hex" class="verify-result-hex"></div>
+    <div id="verify-compare" class="verify-compare"></div>
+  </div>
+</div>
+
+<h2 class="inline-h">2. On your own machine, in 60 seconds</h2>
+
+<p class="small">
+No TEE required on the verifier. This clones the repo and runs six tests
+that load real attestation bytes (TDX, SNP, Nitro, and the ouroboros run)
+and verify them through the full production pipeline: binding match +
+hardware signature chain against Intel / AMD / AWS Nitro root CAs.
+</p>
+
+<pre class="code">$ git clone https://github.com/maceip/bountynet-genesis
+$ cd bountynet-genesis/v2
+$ cargo test --test hardware_regression
+
+running 6 tests
+test snp_stage0_verifies                             ... ok
+test all_three_platforms_share_no_cross_contamination ... ok
+test tdx_stage0_verifies                             ... ok
+test snp_stage1_verifies_and_chains_to_stage0        ... ok
+test tdx_stage1_verifies_and_chains_to_stage0        ... ok
+test nitro_stage0_verifies                           ... ok
+test ouroboros_attestation_verifies                  ... ok
+
+test result: ok. 7 passed; 0 failed</pre>
+
+<h2 class="inline-h">3. Against a live attested endpoint</h2>
+
+<p class="small">
+Follow-up. An attested TLS endpoint that serves the stage 1 EAT from its
+own X.509 cert extension is operationally 1 hour of work
+(<code>cmd_run</code> + <code>cmd_proxy --acme</code> on the existing TDX
+runner). Not live yet; the HTML slot below is reserved as a one-line
+swap-in when it is.
+</p>
+
+<pre class="code">$ bountynet check https://&lt;value_x_prefix&gt;.aeon.site/
+# (coming soon — tracked at v2/HARDWARE_VALIDATION.md §3)</pre>
+
+<p class="small">
+&#x2B50; <strong>A future browser-native quote verifier</strong> is tracked
+as a follow-up. Stage A (compute-only Value X in WASM) is trivial; stage B
+(full ECDSA P-256/P-384 signature chain verification against pinned Intel,
+AMD, and AWS roots) is a week of work. Today this widget proves the
+<em>application identity</em> half of the LATTE two-layer check; the
+<em>platform</em> half requires the cargo route above.
+</p>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- =============================================== -->
+  <!-- ===== #get-started — USE OUR RUNNER =========== -->
+  <!-- =============================================== -->
+  <dialog class="cs-dialog" open id="get-started">
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><p class="text">get_started.sh // two paths</p></div>
+      </div>
+      <div class="content">
+
+<p>
+There are two ways to use bountynet in your own project. They solve
+different problems and most people want the first one.
+</p>
+
+<h2 class="inline-h">Path A: consume the composite Action</h2>
+
+<p class="small">
+Public, consumable from any GitHub repository. Drop it into your workflow,
+point it at your source, and it will produce an attestation.cbor as a
+workflow artifact on every push. This is the "I want attested CI" story.
+</p>
+
+<pre class="code"># .github/workflows/attested-build.yml
+jobs:
+  attested-build:
+    runs-on: [self-hosted, tdx, bountynet]      # or your own TEE labels
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maceip/bountynet-genesis/v2/action@main
+        with:
+          source: v2
+          cmd: cargo build --release</pre>
+
+<p class="small">
+<strong>Honest caveat.</strong> The Action only produces a real attestation
+if the job executes on a TEE-capable host. GitHub-hosted
+<code>ubuntu-latest</code> runners have no TDX. You need a self-hosted
+runner registered against your repo and running inside a TEE. That's
+path B.
+</p>
+
+<h2 class="inline-h">Path B: deploy your own attested runner</h2>
+
+<p class="small">
+Spin up a GCP TDX VM, install the GitHub Actions runner agent, tag it
+with <code>[self-hosted, tdx, bountynet]</code>, and you're done. Our own
+self-hosted runner that produces the ouroboros attestation runs with this
+exact setup.
+</p>
+
+<pre class="code"># one-liner with real creds
+export GITHUB_TOKEN=ghp_your_runner_registration_token
+export GITHUB_REPO=you/your-repo
+./deploy/gcp-tdx.sh</pre>
+
+<p class="small">
+<code>deploy/gcp-tdx.sh</code> provisions a <code>c3-standard-4</code> with
+TDX enabled, installs Docker, copies the bountynet binary into the VM,
+and registers it as a self-hosted runner against the repo you specify.
+Idle cost: about <code>$0.17/hour</code>.
+</p>
+
+<p class="small">
+<strong>Why we don't let you share our runner:</strong> a shared self-hosted
+runner would let anyone who can queue a job execute arbitrary code inside
+our TEE, which voids the attestation story for everyone. Bring your own
+TEE host — we deliberately scope the runner to a single repository.
+</p>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- =============================================== -->
+  <!-- ===== #kms — REAL WORLD: KMS GATED BY TEE ====== -->
+  <!-- =============================================== -->
+  <dialog class="cs-dialog" open id="kms">
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><p class="text">real_world.kms // secrets that only unlock inside the right code</p></div>
+      </div>
+      <div class="content">
+
+<p>
+The most concrete reason to care about attested runners: you can gate
+a secret on <em>what code is about to see it</em>. Not "what machine,"
+not "which IAM principal," not "what network" — <strong>what code</strong>,
+hashed by the CPU before anything runs.
+</p>
+
+<p>
+AWS KMS already supports this directly for Nitro Enclaves via the
+<code>kms:RecipientAttestation:PCR0</code> condition key. A decrypt request
+sent from an enclave whose boot image doesn't match PCR0 gets refused at
+the KMS side. Bountynet's Nitro code path already generates an RSA keypair
+inside the enclave, embeds its public key in the NSM attestation document,
+and routes the CiphertextForRecipient through the enclave for unwrapping —
+the KMS half of that flow is documented and round-tripped in
+<a href="https://github.com/maceip/bountynet-genesis/blob/main/v2/tests/eat_kms_e2e.rs">v2/tests/eat_kms_e2e.rs</a>.
+</p>
+
+<div class="mermaid">
+sequenceDiagram
+    participant App as your app
+    participant Enc as nitro enclave<br/>(bountynet run)
+    participant KMS as AWS KMS
+    App->>Enc: please unwrap &lt;blob&gt;
+    Enc->>Enc: collect NSM attestation doc<br/>with RSA pubkey in user_data
+    Enc->>KMS: Decrypt + Recipient=attestation_doc
+    KMS->>KMS: check kms:RecipientAttestation:PCR0<br/>against policy
+    KMS-->>Enc: CiphertextForRecipient<br/>(encrypted to RSA pubkey)
+    Enc->>Enc: unwrap with enclave-held RSA priv key
+    Enc-->>App: plaintext<br/>(but only inside the attested process)
+</div>
+
+<p class="small">
+<strong>What KMS actually supports</strong> as RecipientAttestation conditions:
+<code>PCR0</code>, <code>PCR1</code>, <code>PCR2</code>, <code>PCR8</code> plus
+image/module digests. There is <em>no</em>
+<code>kms:RecipientAttestation:ValueX</code> — PCR0 is the only hardware-signed
+identity KMS checks. So the story is two-layered:
+</p>
+
+<ol>
+<li>
+<strong>KMS gates on PCR0</strong>, which covers the bountynet boot image.
+That's the outer gate: "the enclave is running bountynet."
+</li>
+<li>
+<strong>Bountynet's EAT carries Value X inside the attested channel.</strong>
+Once KMS releases the wrapped secret, the enclave decrypts it, verifies its
+own Value X (LATTE's ratchet check), and then decides whether to hand the
+plaintext to the application based on an arbitrary policy over Value X,
+previous_attestation, source_hash, artifact_hash — any claim in the EAT.
+</li>
+</ol>
+
+<p class="small">
+That split is actually what you want. KMS is a coarse, global allowlist
+keyed on the boot image. Value X is a fine-grained, project-local policy
+the attested code enforces after unwrapping. Trying to put Value X into the
+KMS condition key would couple your identity to AWS's condition language
+and require a KMS policy update for every rebuild — which defeats the point.
+</p>
+
+<p class="small">
+Platforms other than Nitro need a user-supplied policy gate (Vault plugin,
+OPA sidecar, custom service) because TDX and SNP don't have an equivalent
+of Nitro's NSM-backed KMS recipient flow. That's follow-up work, tracked
+under "bountynet-gate" in DESIGN.md.
+</p>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- =============================================== -->
+  <!-- =========== COLLAPSIBLE DEEP DIVES ============= -->
+  <!-- =============================================== -->
+
+  <details class="cs-dialog" id="invariant">
+    <summary class="heading">
+      <div class="wrapper"><div class="icon"></div><p class="text">invariant.md // the three checks</p></div>
+    </summary>
+    <div class="content">
 
 <p>
 Everything in this repo exists to solve one problem. It breaks down into
@@ -137,21 +413,18 @@ flowchart TB
 <p class="small">
 Check #1 proves the boot image is genuine (shim is in the boot image, CPU measured it).
 Check #2 proves the application payload is genuine (Value X computed by the shim, which
-is trusted because of #1). Check #3 proves the UnifiedQuote was produced by the attested
-environment, not a proxy (channel binding).
+is trusted because of #1). Check #3 proves the attestation was produced by the attested
+environment, not a proxy — this is channel binding.
 </p>
 
-      </div>
-    </form>
-  </dialog>
+    </div>
+  </details>
 
-  <!-- ===== STAGE 0 to STAGE 1 CHAIN ===== -->
-  <dialog class="cs-dialog" open id="flow">
-    <form method="dialog" onsubmit="event.preventDefault()">
-      <div class="heading">
-        <div class="wrapper"><div class="icon"></div><p class="text">stage 0 &rarr; stage 1 chain</p></div>
-      </div>
-      <div class="content">
+  <details class="cs-dialog" id="flow">
+    <summary class="heading">
+      <div class="wrapper"><div class="icon"></div><p class="text">stage 0 &rarr; stage 1 chain</p></div>
+    </summary>
+    <div class="content">
 
 <p>
 <strong>Attestable Containers</strong> (Cambridge, CCS 2025) defines a
@@ -201,17 +474,14 @@ A tamper at any point changes a hash, which changes a binding, which
 changes report_data, which fails the vendor's signature check.
 </p>
 
-      </div>
-    </form>
-  </dialog>
+    </div>
+  </details>
 
-  <!-- ===== EAT SCHEMA ===== -->
-  <dialog class="cs-dialog" open>
-    <form method="dialog" onsubmit="event.preventDefault()">
-      <div class="heading">
-        <div class="wrapper"><div class="icon"></div><p class="text">EAT token schema</p></div>
-      </div>
-      <div class="content">
+  <details class="cs-dialog">
+    <summary class="heading">
+      <div class="wrapper"><div class="icon"></div><p class="text">EAT token schema</p></div>
+    </summary>
+    <div class="content">
 
 <p>
 IETF RATS Entity Attestation Token (<a href="https://datatracker.ietf.org/doc/rfc9711/" target="_blank">RFC 9711</a>),
@@ -247,17 +517,14 @@ previous_hash() = sha256(previous_attestation)   // or zeros for root
 // The TEE hardware signs report_data. No separate app-level key.
 // LATTE contribution #7: use the platform attestation key, not an app key.</pre>
 
-      </div>
-    </form>
-  </dialog>
+    </div>
+  </details>
 
-  <!-- ===== OUROBOROS ===== -->
-  <dialog class="cs-dialog" open id="ouroboros">
-    <form method="dialog" onsubmit="event.preventDefault()">
-      <div class="heading">
-        <div class="wrapper"><div class="icon"></div><p class="text">ouroboros.sh // CI builds itself</p></div>
-      </div>
-      <div class="content">
+  <details class="cs-dialog" id="ouroboros">
+    <summary class="heading">
+      <div class="wrapper"><div class="icon"></div><p class="text">ouroboros.sh // CI builds itself</p></div>
+    </summary>
+    <div class="content">
 
 <p>
 Every push to <code>main</code> that touches <code>v2/</code> triggers
@@ -298,17 +565,14 @@ be walked back to the first hardware run. First run:
 commit <code>2593db6</code>, 2026-04-14 12:40 UTC.
 </p>
 
-      </div>
-    </form>
-  </dialog>
+    </div>
+  </details>
 
-  <!-- ===== PLATFORMS + TRUST ROOTS ===== -->
-  <dialog class="cs-dialog" open>
-    <form method="dialog" onsubmit="event.preventDefault()">
-      <div class="heading">
-        <div class="wrapper"><div class="icon"></div><p class="text">trust anchors // three independent vendors</p></div>
-      </div>
-      <div class="content">
+  <details class="cs-dialog">
+    <summary class="heading">
+      <div class="wrapper"><div class="icon"></div><p class="text">trust anchors // three independent vendors</p></div>
+    </summary>
+    <div class="content">
 
 <p>
 Anytrust (Attestable Containers contribution #4): if two independent TEE
@@ -341,17 +605,14 @@ platforms. No cloud provider is in the trust chain — only the silicon
 vendors.
 </p>
 
-      </div>
-    </form>
-  </dialog>
+    </div>
+  </details>
 
-  <!-- ===== STANDARDS ===== -->
-  <dialog class="cs-dialog" open>
-    <form method="dialog" onsubmit="event.preventDefault()">
-      <div class="heading">
-        <div class="wrapper"><div class="icon"></div><p class="text">standards.txt</p></div>
-      </div>
-      <div class="content">
+  <details class="cs-dialog">
+    <summary class="heading">
+      <div class="wrapper"><div class="icon"></div><p class="text">standards.txt</p></div>
+    </summary>
+    <div class="content">
 
 <table class="cs-table">
 <tr><th>what we build</th><th>derived from</th></tr>
@@ -381,22 +642,19 @@ vendors.
 </tr>
 </table>
 
-      </div>
-    </form>
-  </dialog>
+    </div>
+  </details>
 
-  <!-- ===== QUICK START ===== -->
-  <dialog class="cs-dialog" open>
-    <form method="dialog" onsubmit="event.preventDefault()">
-      <div class="heading">
-        <div class="wrapper"><div class="icon"></div><p class="text">quick_start.sh</p></div>
-      </div>
-      <div class="content">
+  <details class="cs-dialog">
+    <summary class="heading">
+      <div class="wrapper"><div class="icon"></div><p class="text">quick_start.sh</p></div>
+    </summary>
+    <div class="content">
 
 <pre class="code">$ git clone https://github.com/maceip/bountynet-genesis
 $ cd bountynet-genesis/v2
 $ cargo build --release
-$ cargo test                    # 65 tests including 6 real-hardware regressions
+$ cargo test                    # 65 tests including 7 real-hardware regressions
 
 # inside a TEE — stage 0 build
 $ sudo ./target/release/bountynet build /path/to/source \
@@ -410,9 +668,8 @@ $ sudo ./target/release/bountynet run /path/to/source \
 # anywhere — verify an attested-TLS endpoint. no TEE required on the verifier.
 $ ./target/release/bountynet check https://&lt;domain&gt;/</pre>
 
-      </div>
-    </form>
-  </dialog>
+    </div>
+  </details>
 
   <!-- ===== FOOTER ===== -->
   <dialog class="cs-dialog" open>
@@ -459,7 +716,25 @@ mermaid.initialize({
   flowchart: { curve: 'basis', padding: 20 },
   sequence: { actorMargin: 30, boxMargin: 10, messageFontSize: 13 }
 });
+
+// Mermaid gotcha: diagrams inside <details> that start closed render to
+// 0×0 because their containers have no layout. On first open of each
+// details block we re-run mermaid against any mermaid nodes inside it.
+// The nodes swap their original source into a data attribute once rendered,
+// so we have to restore + re-run them.
+document.querySelectorAll('details.cs-dialog').forEach(function(d) {
+  d.addEventListener('toggle', function() {
+    if (!d.open) return;
+    var unrendered = d.querySelectorAll('.mermaid:not([data-processed="true"])');
+    if (unrendered.length) {
+      // First open: mermaid may have skipped these during startOnLoad
+      // because they were measured as zero-height. Run now.
+      mermaid.run({ nodes: unrendered });
+    }
+  }, { once: false });
+});
 </script>
+<script src="assets/verify.js"></script>
 
 </body>
 </html>

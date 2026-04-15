@@ -1,4 +1,8 @@
-/* bountynet-genesis docs — cs16.css-flavored layout + mermaid tuning */
+/* bountynet-genesis docs — cs16.css-flavored layout + mermaid tuning
+ * + <details> collapsibles styled like <dialog> + verify widget
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
 
 body {
   background: #2b3024;
@@ -17,8 +21,9 @@ body {
   gap: 20px;
 }
 
-/* Force dialogs to stack in the page flow (cs16.css uses <dialog open> as modals
-   but we want them rendered inline). */
+/* =============================================================
+ * Force <dialog> to render inline (cs16 uses it as modal otherwise).
+ * ============================================================= */
 .cs-dialog[open] {
   position: static;
   display: block;
@@ -30,49 +35,149 @@ body {
   max-width: 100%;
 }
 
-.cs-dialog .content {
+/* =============================================================
+ * <details> styled like a <dialog>:
+ * cs16.css has no details component, so we mimic the dialog look.
+ * Summary = heading bar, body = content area.
+ * ============================================================= */
+details.cs-dialog {
+  display: block;
+  margin: 0;
+  padding: 0;
+  background: #8a9a6b;
+  border: 2px solid #0f1109;
+  border-top-color: #dbe4c9;
+  border-left-color: #dbe4c9;
+  box-shadow: 2px 2px 0 #0f1109;
+  color: #232b1f;
+}
+
+details.cs-dialog > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  padding: 0;
+  margin: 0;
+  background: linear-gradient(to bottom, #6b7c52 0%, #4c5844 100%);
+  color: #dbe4c9;
+  border-bottom: 1px solid #0f1109;
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+  font-weight: normal;
+}
+
+details.cs-dialog > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.cs-dialog > summary::before {
+  content: "[ + ]";
+  display: inline-block;
+  min-width: 42px;
+  color: #ffd74d;
+  font-family: "VT323", "Courier New", monospace;
+  font-size: 1.05em;
+}
+
+details.cs-dialog[open] > summary::before {
+  content: "[ - ]";
+}
+
+details.cs-dialog > summary .wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+details.cs-dialog > summary .wrapper .icon {
+  width: 16px;
+  height: 16px;
+  background: #ffd74d;
+  border: 1px solid #0f1109;
+}
+
+details.cs-dialog > summary .wrapper .text {
+  margin: 0;
+  font-size: 1em;
+  color: #dbe4c9;
+}
+
+details.cs-dialog > .content {
+  background: #8a9a6b;
+  color: #232b1f;
+  padding: 14px 16px;
+  line-height: 1.55;
+}
+
+/* =============================================================
+ * Shared content styling — applies to both .cs-dialog .content
+ * and details.cs-dialog .content
+ * ============================================================= */
+.cs-dialog .content,
+details.cs-dialog .content {
   max-height: none !important;
   overflow: visible !important;
   line-height: 1.55;
 }
 
-.cs-dialog .content h1 {
+.cs-dialog .content h1,
+details.cs-dialog .content h1 {
   font-size: 1.6em;
   margin: 0.6em 0 0.4em;
-  color: #ffd74d;
+  color: #2b2e20;
   font-weight: normal;
   letter-spacing: 0.02em;
 }
 
-.cs-dialog .content p {
+.cs-dialog .content h2.inline-h,
+details.cs-dialog .content h2.inline-h {
+  font-size: 1.15em;
+  margin: 1.2em 0 0.5em;
+  color: #2b2e20;
+  font-weight: normal;
+  border-bottom: 1px dashed #4c5844;
+  padding-bottom: 4px;
+  letter-spacing: 0.04em;
+}
+
+.cs-dialog .content p,
+details.cs-dialog .content p {
   margin: 0.6em 0;
 }
 
-.cs-dialog .content p.small {
-  font-size: 0.92em;
-  opacity: 0.88;
+.cs-dialog .content p.small,
+details.cs-dialog .content p.small {
+  font-size: 0.94em;
+  opacity: 0.9;
   font-style: italic;
 }
 
-.cs-dialog .content a {
-  color: #ffd74d;
+.cs-dialog .content a,
+details.cs-dialog .content a {
+  color: #8b4513;
   text-decoration: underline;
 }
 
-.cs-dialog .content a:hover {
-  color: #fff4a3;
+.cs-dialog .content a:hover,
+details.cs-dialog .content a:hover {
+  color: #c26d2a;
 }
 
-.cs-dialog .content code {
-  background: rgba(0, 0, 0, 0.35);
+.cs-dialog .content code,
+details.cs-dialog .content code {
+  background: rgba(0, 0, 0, 0.18);
   padding: 1px 5px;
   border-radius: 2px;
   font-family: "VT323", "Courier New", monospace;
-  color: #ffd74d;
+  color: #2b2e20;
 }
 
 .cs-dialog .content pre.code,
-.cs-dialog .content pre.banner {
+details.cs-dialog .content pre.code,
+.cs-dialog .content pre.banner,
+details.cs-dialog .content pre.banner {
   background: #1d2419;
   color: #dbe4c9;
   padding: 14px 16px;
@@ -107,6 +212,7 @@ table.cs-table {
   border: 2px solid #0f1109;
   border-top-color: #232b1f;
   border-left-color: #232b1f;
+  color: #dbe4c9;
 }
 
 table.cs-table th,
@@ -142,8 +248,7 @@ table.cs-table th:last-child {
   border-right: none;
 }
 
-/* Mermaid — style the <pre class="mermaid"> containers after mermaid renders
-   them into SVGs. cs16.css panels are busy, so give mermaid some room. */
+/* Mermaid */
 .mermaid {
   background: #1d2419;
   padding: 16px 12px;
@@ -153,6 +258,7 @@ table.cs-table th:last-child {
   margin: 14px 0;
   overflow-x: auto;
   text-align: center;
+  color: #dbe4c9;
 }
 
 .mermaid svg {
@@ -176,7 +282,179 @@ table.cs-table th:last-child {
   display: inline-block;
 }
 
-/* Small-screen adjustments */
+/* =============================================================
+ * #verifier — the live in-browser Value X widget
+ * ============================================================= */
+#verifier {
+  margin: 16px 0;
+  padding: 14px;
+  background: #1d2419;
+  border: 2px solid #0f1109;
+  border-top-color: #232b1f;
+  border-left-color: #232b1f;
+  color: #dbe4c9;
+}
+
+.verify-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed #4c5844;
+}
+
+.verify-controls label {
+  color: #ffd74d;
+  font-size: 1em;
+  padding-right: 2px;
+}
+
+.verify-controls select,
+.verify-controls input[type="text"] {
+  background: #0f1109;
+  color: #dbe4c9;
+  border: 2px solid #232b1f;
+  border-top-color: #4c5844;
+  border-left-color: #4c5844;
+  padding: 4px 8px;
+  font-family: "VT323", "Courier New", monospace;
+  font-size: 1em;
+  min-width: 140px;
+}
+
+.verify-controls .cs-btn {
+  margin-left: auto;
+}
+
+.verify-controls .cs-btn:first-of-type {
+  margin-left: 0;
+}
+
+.verify-status {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.98em;
+  margin-bottom: 8px;
+  color: #dbe4c9;
+}
+
+.verify-phase-label {
+  color: #ffd74d;
+}
+
+#verify-phase {
+  color: #8fbf6b;
+  font-weight: bold;
+}
+
+.verify-count-sep {
+  opacity: 0.4;
+}
+
+#verify-count {
+  opacity: 0.85;
+}
+
+.verify-log {
+  height: 240px;
+  overflow-y: auto;
+  overflow-x: auto;
+  background: #0a0c07;
+  border: 2px solid #232b1f;
+  border-top-color: #0f1109;
+  border-left-color: #0f1109;
+  padding: 8px 10px;
+  font-family: "VT323", "Courier New", monospace;
+  font-size: 0.96em;
+  line-height: 1.32;
+  color: #dbe4c9;
+  white-space: pre;
+}
+
+.verify-log .verify-line {
+  padding: 0;
+  color: #cfd8b8;
+}
+
+.verify-log .verify-line.dim {
+  color: #7a8e5e;
+  font-style: italic;
+}
+
+.verify-log .verify-line.ok {
+  color: #8fbf6b;
+  font-weight: bold;
+}
+
+.verify-log .verify-line.warn {
+  color: #ffd74d;
+}
+
+.verify-log .verify-line.err {
+  color: #d46a5f;
+  font-weight: bold;
+}
+
+.verify-result {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: #4c5844;
+  border: 2px solid #0f1109;
+  border-top-color: #6b7c52;
+  border-left-color: #6b7c52;
+}
+
+.verify-result-label {
+  color: #ffd74d;
+  font-size: 0.98em;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.verify-result-hex {
+  font-family: "VT323", "Courier New", monospace;
+  font-size: 1.05em;
+  color: #dbe4c9;
+  word-break: break-all;
+  padding: 8px 10px;
+  background: #0a0c07;
+  border: 1px solid #0f1109;
+  letter-spacing: 0.02em;
+}
+
+.verify-compare {
+  margin-top: 10px;
+  padding: 8px 10px;
+  font-size: 0.98em;
+  line-height: 1.5;
+  color: #dbe4c9;
+  background: rgba(0, 0, 0, 0.3);
+  border-left: 3px solid #7a8e5e;
+}
+
+.verify-compare.ok {
+  background: rgba(143, 191, 107, 0.15);
+  border-left-color: #8fbf6b;
+  color: #c5e49f;
+}
+
+.verify-compare.info {
+  background: rgba(255, 215, 77, 0.08);
+  border-left-color: #ffd74d;
+}
+
+.verify-compare code {
+  background: rgba(0, 0, 0, 0.4) !important;
+  color: #ffd74d !important;
+}
+
+/* =============================================================
+ * Small-screen
+ * ============================================================= */
 @media (max-width: 620px) {
   .page {
     padding: 12px 8px 32px;
@@ -188,7 +466,19 @@ table.cs-table th:last-child {
   .cs-dialog .content pre.banner {
     font-size: 0.55em;
   }
+  .verify-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .verify-controls .cs-btn {
+    margin-left: 0;
+    width: 100%;
+  }
+  .verify-log {
+    height: 200px;
+    font-size: 0.82em;
+  }
+  .verify-result-hex {
+    font-size: 0.82em;
+  }
 }
-
-/* Import a retro pixel font for the CS1.6 vibe */
-@import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
