@@ -452,6 +452,24 @@ table.cs-table th:last-child {
   color: #ffd74d !important;
 }
 
+/* Pulsing green dot for the LIVE indicator */
+.live-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  background: #8fbf6b;
+  border: 1px solid #0f1109;
+  margin-right: 6px;
+  box-shadow: 0 0 6px #8fbf6b;
+  animation: live-pulse 1.5s ease-in-out infinite;
+  vertical-align: middle;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px #8fbf6b; }
+  50%      { opacity: 0.55; box-shadow: 0 0 2px #8fbf6b; }
+}
+
 /* =============================================================
  * Small-screen
  * ============================================================= */

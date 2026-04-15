@@ -197,18 +197,51 @@ test ouroboros_attestation_verifies                  ... ok
 
 test result: ok. 7 passed; 0 failed</pre>
 
-<h2 class="inline-h">3. Against a live attested endpoint</h2>
+<h2 class="inline-h">3. Against a live attested endpoint (right now)</h2>
 
 <p class="small">
-Follow-up. An attested TLS endpoint that serves the stage 1 EAT from its
-own X.509 cert extension is operationally 1 hour of work
-(<code>cmd_run</code> + <code>cmd_proxy --acme</code> on the existing TDX
-runner). Not live yet; the HTML slot below is reserved as a one-line
-swap-in when it is.
+<span class="live-dot"></span>
+<strong>LIVE:</strong> our self-hosted GCP TDX runner has a
+<code>bountynet run</code> systemd service listening on port 443. It
+performs a fresh TDX attestation at boot, builds a self-signed TLS
+cert whose key is bound into <code>report_data</code>, and embeds the
+stage 1 EAT as a critical extension at OID <code>2.23.133.5.4.9</code>.
+Every <code>bountynet check</code> you run against it re-does the full
+chain walk from your machine to Intel's pinned root CA.
 </p>
 
-<pre class="code">$ bountynet check https://&lt;value_x_prefix&gt;.aeon.site/
-# (coming soon — tracked at v2/HARDWARE_VALIDATION.md §3)</pre>
+<pre class="code">$ bountynet check https://34.45.143.81/
+
+[bountynet] === attested-TLS check ===
+[bountynet] Target: 34.45.143.81:443
+[bountynet] Leaf cert: 17284 bytes DER
+[bountynet] EAT extension: 16896 bytes
+[bountynet] EAT profile: https://bountynet.dev/eat/v2
+[bountynet] Platform:    Some(Tdx)
+[bountynet] Value X:     f44f87e6f0965493ac6822dd89b155cb82758d6898751196f7892d12684fc49594fa3a8d7dc548d8496fe17597a32c20
+[bountynet] SPKI binding:    PASS
+[bountynet] Quote binding:   PASS
+[bountynet] Quote signature: PASS
+[bountynet]   MRTD: 8370d8f6d02f2d13e211e91c93fde923049522b241425a29a7bf0071ef49b250af4ef49d852fa3e10065d1b51dfce8fb
+[bountynet] Chain step 1: verifying previous stage (8436 bytes EAT)
+[bountynet]   ✓ step 1 quote verifies (Value X stable)
+[bountynet] Chain:           PASS (2 stage(s) walked)
+[bountynet] === Check Complete ===
+[bountynet] 34.45.143.81 is a genuine Tdx TEE running Value X f44f87e6f0965493</pre>
+
+<p class="small">
+<strong>The Value X it serves is different from the one the widget shows as
+a match</strong> — and that's deliberate. The widget's default match
+(<code>58b663bbb60a…</code>) is the <em>archived</em> attestation from commit
+<code>2593db6</code>. The live endpoint serves the <em>current</em> Value X
+for commit <code>8dd008e</code> (which added <code>tdx_ouroboros.cbor</code>
+to <code>v2/testdata/chain/</code>, changing the tree hash).
+Both are real. Both chain to the same Intel root CA. The archived one is
+preserved in git forever; the live one advances with every push that
+touches <code>v2/</code>. To reproduce the live Value X in the widget above,
+set path to <code>v2</code> and ref to <code>main</code> — you should
+get exactly <code>f44f87e6f096…</code> with the current HEAD.
+</p>
 
 <p class="small">
 &#x2B50; <strong>A future browser-native quote verifier</strong> is tracked
