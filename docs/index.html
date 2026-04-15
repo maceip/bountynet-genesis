@@ -3,25 +3,38 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>bountynet-genesis // attested builds, proven on silicon</title>
+<title>bountynet-genesis // trust is a hardware constraint</title>
 <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/gh/ekmas/cs16.css@main/css/cs16.min.css">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 
-<!-- Background Value X watermark — faint hex-dump lineage strings
-     tiled behind the content. Aria-hidden because it's decorative. -->
+<!-- Background Value X watermark — faint hex-dump lineage strings tiled
+     behind the content. Aria-hidden because it's decorative. -->
 <div class="vx-watermark" aria-hidden="true"></div>
+
+<!-- Floating right-rail tactical navigation. Vertical rotated text.
+     Hidden on narrow viewports (<1100px) via media query. -->
+<nav class="vx-side-rail" aria-label="section navigation">
+  <a href="#identity-attestation" class="vx-rail-link">[ IDENTITY ]</a>
+  <a href="#problem-threat-model" class="vx-rail-link">[ THREAT ]</a>
+  <a href="#logic-chain" class="vx-rail-link">[ LOGIC ]</a>
+  <a href="#command-deploy" class="vx-rail-link">[ COMMAND ]</a>
+  <a href="#mandate-constitution" class="vx-rail-link">[ MANDATE ]</a>
+  <a href="#enclave-audit" class="vx-rail-link">[ ENCLAVE ]</a>
+</nav>
 
 <div class="page">
 
-  <!-- ===== HERO ===== -->
+  <!-- =============================================================
+       HERO — banner + mission statement + action row
+       ============================================================= -->
   <dialog class="cs-dialog" open>
     <form method="dialog" onsubmit="event.preventDefault()">
       <div class="heading">
         <div class="wrapper">
           <div class="icon"></div>
-          <p class="text">bountynet-genesis.exe</p>
+          <p class="text">bountynet-genesis.exe // operational briefing</p>
         </div>
       </div>
       <div class="content">
@@ -35,131 +48,143 @@
                                                     // genesis 2026
 </pre>
 
-<h1>A verifiable, universal build runner.</h1>
+<h1>Trust is a hardware constraint.</h1>
 
 <p>
-<strong>bountynet</strong> answers one question with cryptographic proof:
-<em>is the code running on that machine the same code that's in the repo?</em>
-Not "probably." Not "we checked last Tuesday." Not "the cloud provider promises."
-A proof rooted in hardware that anyone can verify and nobody can argue with.
+BountyNet Genesis binds code identity to silicon through a hash the CPU
+vendor signs. Modify the code — the measurement changes. Re-attest — the
+signature still verifies, but the claim no longer matches what anyone
+expected. <strong>The proof survives; the lie doesn't.</strong>
 </p>
 
 <p>
-Proven on real silicon across three independent TEE vendors on 2026-04-14.
-The chain is closed on itself: the build runner that produced this binary
-is itself an attested build of this repo. Everything below this point is
-something you can verify right now, in this tab, in under 60 seconds.
+Proven on real silicon across three independent TEE vendors on 2026-04-14
+(Intel TDX, AMD SEV-SNP, AWS Nitro). The runner that built this binary is
+itself an attested build of this repo, and the endpoint serving this page's
+attestation is a live TDX enclave you can query right now — no account,
+no secrets, no cloud-provider middle-man.
 </p>
 
 <menu class="footer-btns">
-  <a href="#live" class="cs-btn">verify it live</a>
-  <a href="https://github.com/maceip/bountynet-genesis" class="cs-btn">source on github</a>
-  <a href="#get-started" class="cs-btn">use our runner</a>
+  <a href="#identity-attestation" class="cs-btn">verify it live</a>
+  <a href="https://github.com/maceip/bountynet-genesis" class="cs-btn">source</a>
+  <a href="#command-deploy" class="cs-btn">deploy</a>
 </menu>
 
       </div>
     </form>
   </dialog>
 
-  <!-- ===== STATUS BOARD ===== -->
+  <!-- =============================================================
+       OPERATIONAL STATUS GRID
+       ============================================================= -->
   <dialog class="cs-dialog" open>
     <form method="dialog" onsubmit="event.preventDefault()">
       <div class="heading">
-        <div class="wrapper"><div class="icon"></div><span class="text">platform_status.log</span></div>
+        <div class="wrapper"><div class="icon"></div><span class="text">operational_status.log</span></div>
       </div>
       <div class="content">
 
 <table class="cs-table">
 <tr>
-  <th>platform</th>
-  <th>hardware</th>
-  <th>root of trust</th>
-  <th>chain</th>
+  <th>metric</th>
   <th>status</th>
+  <th>specification</th>
 </tr>
 <tr>
-  <td>Intel TDX</td>
-  <td>GCP c3-standard-4</td>
-  <td>Intel SGX Root CA</td>
-  <td>stage 0 &rarr; stage 1</td>
+  <td>platform coverage</td>
   <td class="ok">PROVEN</td>
+  <td>Intel TDX + AMD SEV-SNP + AWS Nitro — live hardware, real quotes captured</td>
 </tr>
 <tr>
-  <td>AMD SEV-SNP</td>
-  <td>AWS c6a.xlarge</td>
-  <td>AMD Root Key (ARK)</td>
-  <td>stage 0 &rarr; stage 1</td>
-  <td class="ok">PROVEN</td>
+  <td>attestation chain</td>
+  <td class="ok">LIVE</td>
+  <td>stage 0 &rarr; stage 1 with <code>report_data</code> binding, recursive chain walker</td>
 </tr>
 <tr>
-  <td>AWS Nitro</td>
-  <td>AWS m5.xlarge enclave</td>
-  <td>AWS Nitro Root CA</td>
-  <td>stage 0 (enclave)</td>
-  <td class="ok">PROVEN</td>
+  <td>vendor root trust</td>
+  <td class="ok">PINNED</td>
+  <td>Intel SGX Root CA + AMD ARK + AWS Nitro Root CA</td>
+</tr>
+<tr>
+  <td>self-build loop</td>
+  <td class="ok">CLOSED</td>
+  <td>CI builds bountynet on its own self-hosted TDX runner</td>
+</tr>
+<tr>
+  <td>live endpoint</td>
+  <td class="ok">SERVING</td>
+  <td><code>https://34.45.143.81/</code> — attested-TLS, GCP c3-standard-4</td>
+</tr>
+<tr>
+  <td>regression gate</td>
+  <td class="ok">65/65</td>
+  <td>7 tests run real hardware bytes through <code>verify_platform_quote</code> on every commit</td>
 </tr>
 </table>
-
-<p class="small">
-Real attestation bytes from each run are archived in
-<code>v2/testdata/chain/</code> and re-verified on every commit via
-<code>tests/hardware_regression.rs</code>. Any regression in the producer
-or verifier surfaces in CI before a hardware run is needed.
-</p>
 
       </div>
     </form>
   </dialog>
 
-  <!-- =============================================== -->
-  <!-- ===== #live — LIVE ATTESTATION (the headline) === -->
-  <!-- =============================================== -->
-  <dialog class="cs-dialog" open id="live">
+  <!-- =============================================================
+       #identity-attestation — INTERACTIVE PROOF (the headline CTA)
+       ============================================================= -->
+  <dialog class="cs-dialog" open id="identity-attestation">
     <form method="dialog" onsubmit="event.preventDefault()">
       <div class="heading">
-        <div class="wrapper"><div class="icon"></div><span class="text">live_attestation.exe // verify it yourself</span></div>
+        <div class="wrapper"><div class="icon"></div><span class="text">[ live_remote_attestation_module ]</span></div>
       </div>
       <div class="content">
 
 <p>
-On <strong>2026-04-14 12:40 UTC</strong>, a GitHub Actions workflow triggered
-itself on our self-hosted GCP TDX runner, built <code>v2/</code> inside the
-TEE, and produced a hardware-signed Value X. That attestation is committed
-byte-identically at
-<a href="https://github.com/maceip/bountynet-genesis/blob/main/v2/testdata/chain/tdx_ouroboros.cbor">v2/testdata/chain/tdx_ouroboros.cbor</a>.
-The live endpoint on the same TDX runner currently serves a different Value X
-for the current <code>main</code> HEAD — both are real, both chain to Intel's
-root CA, both are below.
+Do not take our word for it. The module below reproduces Value X — the
+application-identity half of LATTE's two-layer check — in this browser
+session, against any commit of the repo. Click the button; the widget
+walks <code>v2/</code> via the GitHub tree API, hashes every file with
+native <code>crypto.subtle.digest('SHA-384')</code>, and produces the
+same 48-byte result <code>bountynet build</code> produces inside the TDX
+runner.
 </p>
+
+<p>
+<strong>Important distinction.</strong> This widget verifies Value X — the
+application identity. It does <em>not</em> verify the silicon signature
+chain against the vendor root CA (that requires ECDSA verification we
+haven't yet ported to WASM). For the full platform check, run
+<code>cargo test --test hardware_regression</code> locally, or
+<code>bountynet check</code> against the live endpoint — both described
+in section 2 below.
+</p>
+
+<h2 class="inline-h">live lineage // archive &amp; current head</h2>
 
 <div class="vx-lineage">
   <div class="vx-chip">
-    <span class="vx-label">archive // commit 2593db6</span>
+    <span class="vx-label">archive // commit 2593db6 (ouroboros run)</span>
     <code class="vx-hex" id="vx-archive">58b663bbb60a906f29a2e5141c67a4a163271a9af24304e282bdbbbb8fb94fa5bc337dda323d37e7f78f429bcf80810c</code>
     <button class="vx-copy" data-copy-target="vx-archive" aria-label="copy archive Value X">copy</button>
   </div>
   <div class="vx-arrow">&darr;</div>
   <div class="vx-chip vx-chip-live">
-    <span class="vx-label"><span class="live-dot"></span>live // commit 8dd008e (main)</span>
+    <span class="vx-label"><span class="live-dot"></span>live // commit 8dd008e (current main)</span>
     <code class="vx-hex" id="vx-live">f44f87e6f0965493ac6822dd89b155cb82758d6898751196f7892d12684fc49594fa3a8d7dc548d8496fe17597a32c20</code>
     <button class="vx-copy" data-copy-target="vx-live" aria-label="copy live Value X">copy</button>
   </div>
 </div>
 
-<p>
-Three ways to verify it, in order of how much effort each takes:
-</p>
-
-<h2 class="inline-h">1. In your browser, right now</h2>
-
 <p class="small">
-This widget walks the <code>v2</code> directory at a given git ref via the
-GitHub tree API, hashes every file with
-<code>crypto.subtle.digest('SHA-384')</code>, and reproduces the exact Value X
-algorithm <code>bountynet build</code> runs on the TDX runner. Pure JS, no
-WASM, no external libraries. Click the button, watch every file stream past,
-and see the 48-byte result.
+Both values are real. The archive is the Value X the ouroboros CI run
+produced at commit <code>2593db6</code>, signed by Intel's TDX module and
+committed byte-identically at <code>v2/testdata/chain/tdx_ouroboros.cbor</code>.
+The live value is what the endpoint at <code>https://34.45.143.81/</code>
+serves right now — different bytes because the tree advanced when
+<code>tdx_ouroboros.cbor</code> was added to <code>v2/testdata/chain/</code>.
+Same chain, same pinned root CA, two different commits. The widget
+reproduces either one; the live endpoint serves the current one.
 </p>
+
+<h2 class="inline-h">compute it in your browser</h2>
 
 <div id="verifier"
      data-registered-value-x="58b663bbb60a906f29a2e5141c67a4a163271a9af24304e282bdbbbb8fb94fa5bc337dda323d37e7f78f429bcf80810c"
@@ -173,7 +198,7 @@ and see the 48-byte result.
     </select>
     <label for="verify-ref">git ref</label>
     <input id="verify-ref" class="cs-input" type="text" value="2593db6" placeholder="commit / branch / tag">
-    <button id="verify-run" class="cs-btn">compute Value X live</button>
+    <button id="verify-run" class="cs-btn">compute value x live</button>
     <button id="verify-clear" class="cs-btn">clear</button>
   </div>
 
@@ -187,47 +212,48 @@ and see the 48-byte result.
   <div id="verify-log" class="verify-log"></div>
 
   <div id="verify-result" class="verify-result" hidden>
-    <div class="verify-result-label">computed Value X (sha384, 48 bytes):</div>
+    <div class="verify-result-label">computed value x (sha384, 48 bytes):</div>
     <div id="verify-result-hex" class="verify-result-hex"></div>
     <div id="verify-compare" class="verify-compare"></div>
   </div>
 </div>
 
-<h2 class="inline-h">2. On your own machine, in 60 seconds</h2>
+<h2 class="inline-h">full verification // 60 seconds locally</h2>
 
 <p class="small">
-No TEE required on the verifier. This clones the repo and runs six tests
-that load real attestation bytes (TDX, SNP, Nitro, and the ouroboros run)
-and verify them through the full production pipeline: binding match +
-hardware signature chain against Intel / AMD / AWS Nitro root CAs.
+This is the flow that closes both halves of LATTE — application identity
+AND platform signature. Clones the repo, loads real attestation bytes from
+<code>v2/testdata/chain/</code>, and runs them through <code>verify_platform_quote</code>
+which checks the binding AND walks the signature chain to the pinned
+vendor root CA (Intel / AMD / AWS) for each platform. No TEE required on
+your machine.
 </p>
 
 <pre class="code">$ git clone https://github.com/maceip/bountynet-genesis
 $ cd bountynet-genesis/v2
 $ cargo test --test hardware_regression
 
-running 6 tests
-test snp_stage0_verifies                             ... ok
+running 7 tests
+test snp_stage0_verifies                              ... ok
 test all_three_platforms_share_no_cross_contamination ... ok
-test tdx_stage0_verifies                             ... ok
-test snp_stage1_verifies_and_chains_to_stage0        ... ok
-test tdx_stage1_verifies_and_chains_to_stage0        ... ok
-test nitro_stage0_verifies                           ... ok
-test ouroboros_attestation_verifies                  ... ok
+test tdx_stage0_verifies                              ... ok
+test snp_stage1_verifies_and_chains_to_stage0         ... ok
+test tdx_stage1_verifies_and_chains_to_stage0         ... ok
+test nitro_stage0_verifies                            ... ok
+test ouroboros_attestation_verifies                   ... ok
 
 test result: ok. 7 passed; 0 failed</pre>
 
-<h2 class="inline-h">3. Against a live attested endpoint (right now)</h2>
+<h2 class="inline-h"><span class="live-dot"></span>against the live endpoint</h2>
 
 <p class="small">
-<span class="live-dot"></span>
-<strong>LIVE:</strong> our self-hosted GCP TDX runner has a
-<code>bountynet run</code> systemd service listening on port 443. It
-performs a fresh TDX attestation at boot, builds a self-signed TLS
-cert whose key is bound into <code>report_data</code>, and embeds the
-stage 1 EAT as a critical extension at OID <code>2.23.133.5.4.9</code>.
-Every <code>bountynet check</code> you run against it re-does the full
-chain walk from your machine to Intel's pinned root CA.
+A self-hosted GCP TDX runner is serving an attested-TLS endpoint right now.
+On every <code>bountynet check</code> invocation, the client pulls the leaf
+cert, extracts the EAT CBOR from the X.509 extension at OID
+<code>2.23.133.5.4.9</code>, verifies the TLS channel binding, verifies the
+stage 1 TDX quote against Intel's pinned root, and walks
+<code>previous_attestation</code> back to stage 0. No CA in the trust chain
+— Intel's silicon is the root.
 </p>
 
 <pre class="code">$ bountynet check https://34.45.143.81/
@@ -244,59 +270,298 @@ chain walk from your machine to Intel's pinned root CA.
 [bountynet] Quote signature: PASS
 [bountynet]   MRTD: 8370d8f6d02f2d13e211e91c93fde923049522b241425a29a7bf0071ef49b250af4ef49d852fa3e10065d1b51dfce8fb
 [bountynet] Chain step 1: verifying previous stage (8436 bytes EAT)
-[bountynet]   ✓ step 1 quote verifies (Value X stable)
+[bountynet]   &#x2713; step 1 quote verifies (Value X stable)
 [bountynet] Chain:           PASS (2 stage(s) walked)
 [bountynet] === Check Complete ===
 [bountynet] 34.45.143.81 is a genuine Tdx TEE running Value X f44f87e6f0965493</pre>
 
-<p class="small">
-<strong>The Value X it serves is different from the one the widget shows as
-a match</strong> — and that's deliberate. The widget's default match
-(<code>58b663bbb60a…</code>) is the <em>archived</em> attestation from commit
-<code>2593db6</code>. The live endpoint serves the <em>current</em> Value X
-for commit <code>8dd008e</code> (which added <code>tdx_ouroboros.cbor</code>
-to <code>v2/testdata/chain/</code>, changing the tree hash).
-Both are real. Both chain to the same Intel root CA. The archived one is
-preserved in git forever; the live one advances with every push that
-touches <code>v2/</code>. To reproduce the live Value X in the widget above,
-set path to <code>v2</code> and ref to <code>main</code> — you should
-get exactly <code>f44f87e6f096…</code> with the current HEAD.
+      </div>
+    </form>
+  </dialog>
+
+  <!-- =============================================================
+       #problem-threat-model — WHY + threat model
+       ============================================================= -->
+  <dialog class="cs-dialog" open id="problem-threat-model">
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><span class="text">the problem // software-only security is a fallacy</span></div>
+      </div>
+      <div class="content">
+
+<p>
+In a standard cloud environment, the host OS is omnipotent. Root on the
+hypervisor can scrape VM memory, intercept syscalls, modify binaries, and
+impersonate services. Normally you solve this by <em>trusting</em> the
+cloud provider. Genesis removes the human element from the trust equation:
+the silicon itself produces a signed measurement of every byte it's
+running, and a verifier can check that signature against a root CA the CPU
+vendor published years ago.
 </p>
 
+<h2 class="inline-h">threat model</h2>
+
+<table class="cs-table">
+<tr>
+  <th>attack</th>
+  <th>vector</th>
+  <th>genesis countermeasure</th>
+  <th>result</th>
+</tr>
+<tr>
+  <td>memory scraping</td>
+  <td>hypervisor reads VM memory</td>
+  <td>SNP/TDX encrypt memory; Nitro has no shared memory at all</td>
+  <td class="ok">BLOCKED</td>
+</tr>
+<tr>
+  <td>attestation key theft</td>
+  <td>silicon extraction</td>
+  <td>keys held in PSP / TDX Module / NSM — not exportable</td>
+  <td class="ok">BLOCKED</td>
+</tr>
+<tr>
+  <td>pre-boot code injection</td>
+  <td>swap binary before load</td>
+  <td>measurement covers boot image; verifier policy rejects unknown</td>
+  <td class="ok">REJECTED</td>
+</tr>
+<tr>
+  <td>runtime source modification</td>
+  <td>attacker rewrites files on disk</td>
+  <td>ratchet locks CT before build; stage 1 re-verifies at boot</td>
+  <td class="ok">REJECTED</td>
+</tr>
+<tr>
+  <td>forged attestation relay</td>
+  <td>serve real quote from a different host</td>
+  <td>TLS key hash is in <code>report_data</code> — channel binding fails</td>
+  <td class="ok">REJECTED</td>
+</tr>
+<tr>
+  <td>side-channel leakage</td>
+  <td>cache timing / Spectre-class</td>
+  <td>not mitigated — ongoing research, vendor microcode updates only</td>
+  <td class="not">NOT COVERED</td>
+</tr>
+<tr>
+  <td>denial of service</td>
+  <td>hypervisor stops or throttles the VM</td>
+  <td>not mitigated — TEE guarantees integrity, not availability</td>
+  <td class="not">NOT COVERED</td>
+</tr>
+<tr>
+  <td>buggy enclave code</td>
+  <td>the attested code itself leaks secrets</td>
+  <td>not mitigated — TEE measures the code, can't fix it</td>
+  <td class="not">NOT COVERED</td>
+</tr>
+<tr>
+  <td>single-vendor compromise</td>
+  <td>Intel or AMD or AWS issues forged attestations</td>
+  <td>anytrust: build the same source on 2+ vendors, cross-witness</td>
+  <td class="warn">MITIGATED (not eliminated)</td>
+</tr>
+</table>
+
 <p class="small">
-&#x2B50; <strong>A future browser-native quote verifier</strong> is tracked
-as a follow-up. Stage A (compute-only Value X in WASM) is trivial; stage B
-(full ECDSA P-256/P-384 signature chain verification against pinned Intel,
-AMD, and AWS roots) is a week of work. Today this widget proves the
-<em>application identity</em> half of the LATTE two-layer check; the
-<em>platform</em> half requires the cargo route above.
+The last four rows are the honest limits. Genesis is not a magic shield;
+it is a narrow, provable claim about what code is running on which
+hardware. Everything else — DoS resilience, side-channel hardening, bug-free
+enclave code, multi-vendor trust — is architectural work on top.
 </p>
 
       </div>
     </form>
   </dialog>
 
-  <!-- =============================================== -->
-  <!-- ===== #get-started — USE OUR RUNNER =========== -->
-  <!-- =============================================== -->
-  <dialog class="cs-dialog" open id="get-started">
+  <!-- =============================================================
+       #logic-chain — HOW: the chain (no KMS confusion)
+       ============================================================= -->
+  <dialog class="cs-dialog" open id="logic-chain">
     <form method="dialog" onsubmit="event.preventDefault()">
       <div class="heading">
-        <div class="wrapper"><div class="icon"></div><span class="text">get_started.sh // two paths</span></div>
+        <div class="wrapper"><div class="icon"></div><span class="text">[ protocol_architecture: the chain ]</span></div>
       </div>
       <div class="content">
 
 <p>
-There are two ways to use bountynet in your own project. They solve
+The system is self-verifying from the first instruction. Every stage's
+claim is signed by the CPU vendor before the next stage starts.
+</p>
+
+<p>
+<strong>I. Stage 0 — Attested build.</strong>
+<code>bountynet build</code> runs inside the TEE. It locks the source tree
+(the ratchet, from Attestable Containers), runs the build command, hashes
+the output (A), computes Value X (sha384 of the frozen source), and collects
+a hardware quote whose <code>report_data[0..32]</code> binds all of the above.
+The quote is signed by the silicon.
+</p>
+
+<p>
+<strong>II. Handover — Disk, not keys.</strong>
+The stage 0 attestation is written to disk alongside the artifact. There
+are no keys to hand over — the signing happened inside the TEE and the
+signature is portable.
+</p>
+
+<p>
+<strong>III. Stage 1 — Attested runtime.</strong>
+<code>bountynet run</code> boots inside a TEE, loads the stage 0 attestation
+from disk, verifies it against the pinned vendor root, re-computes Value X
+from the on-disk source, confirms the match, generates its own TLS keypair,
+and collects a new hardware quote binding <code>sha256(tls_spki)</code> and
+<code>sha256(stage0_attestation)</code> into <code>report_data</code>. The
+new quote is served in an X.509 cert extension over TLS — attested-TLS.
+</p>
+
+<p>
+<strong>IV. Continuous verification.</strong>
+Any client running <code>bountynet check</code> pulls the leaf cert,
+extracts the EAT, verifies the signature chain, checks the channel
+binding, walks <code>previous_attestation</code> back to stage 0, and
+confirms Value X is stable across the chain. Every link is a hash in a
+hardware-signed <code>report_data</code>. No gaps.
+</p>
+
+<div class="mermaid">
+sequenceDiagram
+    participant Dev as developer
+    participant Git as git repo
+    participant S0 as stage 0 TEE<br/>(bountynet build)
+    participant Disk as disk
+    participant S1 as stage 1 TEE<br/>(bountynet run)
+    participant Cli as verifier<br/>(bountynet check)
+    Dev->>Git: push source
+    Git->>S0: clone inside TEE
+    S0->>S0: CT = sha384(source)
+    S0->>S0: ratchet: freeze source read-only
+    S0->>S0: build + A = sha384(artifact)
+    S0->>S0: Value X = sha384(frozen source)
+    S0->>S0: collect quote, report_data = binding
+    S0->>Disk: attestation.cbor
+    Note over S1: boot inside TEE
+    Disk->>S1: load stage 0 EAT
+    S1->>S1: verify stage 0 quote vs vendor root
+    S1->>S1: recompute Value X from disk
+    S1->>S1: set_previous(stage0_cbor)
+    S1->>S1: collect new quote
+    S1->>Cli: TLS handshake<br/>(cert carries stage 1 EAT)
+    Cli->>Cli: extract EAT from cert extension
+    Cli->>Cli: check TLS SPKI == eat.tls_spki_hash
+    Cli->>Cli: verify stage 1 quote vs Intel root
+    Cli->>Cli: walk previous_attestation
+    Cli->>Cli: verify stage 0 quote vs Intel root
+    Cli->>Cli: assert Value X stable across chain
+    Cli-->>Dev: green / red
+</div>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- =============================================================
+       #kms — real-world: KMS gated by PCR0 (honest framing)
+       ============================================================= -->
+  <dialog class="cs-dialog" open id="kms-flow">
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><span class="text">[ real_world: kms unwrap gated by PCR0 ]</span></div>
+      </div>
+      <div class="content">
+
+<p>
+The most concrete reason to care about attested runners: you can gate a
+secret on <em>what code is about to see it</em>. Not "what machine," not
+"which IAM principal," not "what network" — <strong>what code</strong>,
+hashed by the CPU before anything runs.
+</p>
+
+<p>
+AWS KMS supports this directly for Nitro Enclaves via the
+<code>kms:RecipientAttestation:PCR0</code> condition key. A <code>Decrypt</code>
+request sent from an enclave whose boot image doesn't match PCR0 gets
+refused at the KMS side. Bountynet's Nitro code path already generates an
+RSA keypair inside the enclave, embeds its public key in the NSM
+attestation document, and routes <code>CiphertextForRecipient</code>
+through the enclave for unwrapping. The flow is round-tripped in
+<a href="https://github.com/maceip/bountynet-genesis/blob/main/v2/tests/eat_kms_e2e.rs">v2/tests/eat_kms_e2e.rs</a>.
+</p>
+
+<div class="mermaid">
+sequenceDiagram
+    participant App as your app
+    participant Enc as nitro enclave<br/>(bountynet run)
+    participant KMS as AWS KMS
+    App->>Enc: please unwrap &lt;blob&gt;
+    Enc->>Enc: collect NSM attestation<br/>(RSA pubkey in user_data)
+    Enc->>KMS: Decrypt + Recipient=attestation_doc
+    KMS->>KMS: check kms:RecipientAttestation:PCR0<br/>against policy
+    KMS-->>Enc: CiphertextForRecipient<br/>(encrypted to RSA pubkey)
+    Enc->>Enc: unwrap with enclave-held RSA priv key
+    Enc-->>App: plaintext<br/>(inside the attested process)
+</div>
+
+<p class="small">
+<strong>What KMS actually supports</strong> as RecipientAttestation conditions:
+<code>PCR0</code>, <code>PCR1</code>, <code>PCR2</code>, <code>PCR8</code>,
+plus image/module digests. There is no
+<code>kms:RecipientAttestation:ValueX</code> — PCR0 is the only
+hardware-signed identity KMS checks. So the story is two-layered:
+</p>
+
+<ol>
+<li><strong>KMS gates on PCR0</strong>, which covers the bountynet boot
+image. "The enclave is running bountynet."</li>
+<li><strong>Bountynet's EAT carries Value X inside the attested channel.</strong>
+Once KMS releases the wrapped secret, the enclave decrypts it and verifies
+its own Value X (LATTE's ratchet check). The attested code then decides
+whether to hand the plaintext to the application based on an arbitrary
+policy over Value X, <code>previous_attestation</code>, <code>source_hash</code>,
+and <code>artifact_hash</code> — any claim in the EAT.</li>
+</ol>
+
+<p class="small">
+That split is the right shape. KMS is a coarse, global allowlist keyed on
+the boot image. Value X is a fine-grained, project-local policy enforced
+by the attested code after unwrapping. Trying to put Value X into the KMS
+condition key would couple your identity to AWS's condition language and
+require a KMS policy update on every rebuild — which defeats the point.
+</p>
+
+<p class="small">
+TDX and SNP need a user-supplied policy gate (Vault plugin, OPA sidecar,
+custom service) because they don't have an equivalent of Nitro's
+NSM-backed KMS recipient flow. That's follow-up work tracked under
+<code>bountynet-gate</code> in DESIGN.md.
+</p>
+
+      </div>
+    </form>
+  </dialog>
+
+  <!-- =============================================================
+       #command-deploy — GET STARTED: two paths
+       ============================================================= -->
+  <dialog class="cs-dialog" open id="command-deploy">
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><span class="text">[ deploy_protocol // two paths ]</span></div>
+      </div>
+      <div class="content">
+
+<p>
+There are two ways to use Genesis in your own project. They solve
 different problems and most people want the first one.
 </p>
 
-<h2 class="inline-h">Path A: consume the composite Action</h2>
+<h2 class="inline-h">Path A // consume the composite Action</h2>
 
 <p class="small">
 Public, consumable from any GitHub repository. Drop it into your workflow,
-point it at your source, and it will produce an attestation.cbor as a
-workflow artifact on every push. This is the "I want attested CI" story.
+point it at your source, and it will produce an <code>attestation.cbor</code>
+as a workflow artifact on every push.
 </p>
 
 <pre class="code"># .github/workflows/attested-build.yml
@@ -314,134 +579,136 @@ jobs:
 <strong>Honest caveat.</strong> The Action only produces a real attestation
 if the job executes on a TEE-capable host. GitHub-hosted
 <code>ubuntu-latest</code> runners have no TDX. You need a self-hosted
-runner registered against your repo and running inside a TEE. That's
+runner registered against your repo and running inside a TEE — that's
 path B.
 </p>
 
-<h2 class="inline-h">Path B: deploy your own attested runner</h2>
+<h2 class="inline-h">Path B // deploy your own attested runner</h2>
 
 <p class="small">
-Spin up a GCP TDX VM, install the GitHub Actions runner agent, tag it
-with <code>[self-hosted, tdx, bountynet]</code>, and you're done. Our own
-self-hosted runner that produces the ouroboros attestation runs with this
-exact setup.
+Spin up a GCP TDX VM (cheapest TEE option), install the GitHub Actions
+runner agent, tag it <code>[self-hosted, tdx, bountynet]</code>, and you're
+done. Our own self-hosted runner that produces the ouroboros attestation
+runs with this exact setup.
 </p>
 
-<pre class="code"># one-liner with real creds
-export GITHUB_TOKEN=ghp_your_runner_registration_token
-export GITHUB_REPO=you/your-repo
-./deploy/gcp-tdx.sh</pre>
+<pre class="code">$ export GITHUB_TOKEN=ghp_your_runner_registration_token
+$ export GITHUB_REPO=you/your-repo
+$ ./deploy/gcp-tdx.sh
+
+# provisions a c3-standard-4 with TDX enabled, installs Docker, copies
+# the bountynet binary, registers the instance as a self-hosted runner
+# against the repo you specify. idle cost: ~$0.17/hour.</pre>
 
 <p class="small">
-<code>deploy/gcp-tdx.sh</code> provisions a <code>c3-standard-4</code> with
-TDX enabled, installs Docker, copies the bountynet binary into the VM,
-and registers it as a self-hosted runner against the repo you specify.
-Idle cost: about <code>$0.17/hour</code>.
-</p>
-
-<p class="small">
-<strong>Why we don't let you share our runner:</strong> a shared self-hosted
+<strong>Why we don't let you share our runner.</strong> A shared self-hosted
 runner would let anyone who can queue a job execute arbitrary code inside
-our TEE, which voids the attestation story for everyone. Bring your own
-TEE host — we deliberately scope the runner to a single repository.
+our TEE. That voids the attestation guarantee for everyone using the same
+runner. Bring your own TEE host — we deliberately scope our runner to a
+single repository.
+</p>
+
+<p class="small">
+<strong>Follow-up: shadow attestation service</strong> — a narrow,
+single-purpose endpoint that accepts a source tarball and returns a
+bountynet-signed shadow EAT, zero TEE required on the client side. Tracked,
+not yet built. See DESIGN.md.
 </p>
 
       </div>
     </form>
   </dialog>
 
-  <!-- =============================================== -->
-  <!-- ===== #kms — REAL WORLD: KMS GATED BY TEE ====== -->
-  <!-- =============================================== -->
-  <dialog class="cs-dialog" open id="kms">
+  <!-- =============================================================
+       #mandate-constitution — MANDATES
+       ============================================================= -->
+  <dialog class="cs-dialog" open id="mandate-constitution">
     <form method="dialog" onsubmit="event.preventDefault()">
       <div class="heading">
-        <div class="wrapper"><div class="icon"></div><span class="text">real_world.kms // secrets that only unlock inside the right code</span></div>
+        <div class="wrapper"><div class="icon"></div><span class="text">[ genesis_constitution // operational mandates ]</span></div>
       </div>
       <div class="content">
 
 <p>
-The most concrete reason to care about attested runners: you can gate
-a secret on <em>what code is about to see it</em>. Not "what machine,"
-not "which IAM principal," not "what network" — <strong>what code</strong>,
-hashed by the CPU before anything runs.
+Six rules, derived verbatim from
+<a href="https://github.com/maceip/bountynet-genesis/blob/main/v2/CONSTITUTION.md">v2/CONSTITUTION.md</a>.
+Every code change in this repo is checked against them. If a feature
+doesn't serve one of these, it doesn't get built.
 </p>
 
-<p>
-AWS KMS already supports this directly for Nitro Enclaves via the
-<code>kms:RecipientAttestation:PCR0</code> condition key. A decrypt request
-sent from an enclave whose boot image doesn't match PCR0 gets refused at
-the KMS side. Bountynet's Nitro code path already generates an RSA keypair
-inside the enclave, embeds its public key in the NSM attestation document,
-and routes the CiphertextForRecipient through the enclave for unwrapping —
-the KMS half of that flow is documented and round-tripped in
-<a href="https://github.com/maceip/bountynet-genesis/blob/main/v2/tests/eat_kms_e2e.rs">v2/tests/eat_kms_e2e.rs</a>.
-</p>
+<ol class="mandates">
 
-<div class="mermaid">
-sequenceDiagram
-    participant App as your app
-    participant Enc as nitro enclave<br/>(bountynet run)
-    participant KMS as AWS KMS
-    App->>Enc: please unwrap &lt;blob&gt;
-    Enc->>Enc: collect NSM attestation doc<br/>with RSA pubkey in user_data
-    Enc->>KMS: Decrypt + Recipient=attestation_doc
-    KMS->>KMS: check kms:RecipientAttestation:PCR0<br/>against policy
-    KMS-->>Enc: CiphertextForRecipient<br/>(encrypted to RSA pubkey)
-    Enc->>Enc: unwrap with enclave-held RSA priv key
-    Enc-->>App: plaintext<br/>(but only inside the attested process)
-</div>
-
-<p class="small">
-<strong>What KMS actually supports</strong> as RecipientAttestation conditions:
-<code>PCR0</code>, <code>PCR1</code>, <code>PCR2</code>, <code>PCR8</code> plus
-image/module digests. There is <em>no</em>
-<code>kms:RecipientAttestation:ValueX</code> — PCR0 is the only hardware-signed
-identity KMS checks. So the story is two-layered:
-</p>
-
-<ol>
 <li>
-<strong>KMS gates on PCR0</strong>, which covers the bountynet boot image.
-That's the outer gate: "the enclave is running bountynet."
+<strong>hardware before software</strong>
+Every trust claim is rooted in a silicon-level signature from the CPU
+vendor. No intermediaries, no bearer tokens, no cloud-provider promises.
+If the vendor root CA doesn't sign it, we don't trust it.
 </li>
+
 <li>
-<strong>Bountynet's EAT carries Value X inside the attested channel.</strong>
-Once KMS releases the wrapped secret, the enclave decrypts it, verifies its
-own Value X (LATTE's ratchet check), and then decides whether to hand the
-plaintext to the application based on an arbitrary policy over Value X,
-previous_attestation, source_hash, artifact_hash — any claim in the EAT.
+<strong>the chain is unbroken</strong>
+Source &rarr; attested build &rarr; artifact &rarr; attested runtime.
+Every link is a hash in a hardware-signed <code>report_data</code>. If any
+link is missing, the result is <em>unverified</em>, not <em>true</em>.
 </li>
+
+<li>
+<strong>value X is the identity</strong>
+One sha384 represents "this exact software." Reproduced across platforms,
+computed inside TEE hardware, verifiable by anyone with the source. No
+external database required, no signing authority required, no registry
+required for the cryptographic proof.
+</li>
+
+<li>
+<strong>the TEE is the witness, not the oracle</strong>
+We do <em>not</em> require reproducible builds. The TEE attests that
+source <code>S</code> became artifact <code>A</code> inside environment
+<code>E</code>. Anyone can re-run the build in their own TEE and
+cross-witness for anytrust. This is the Attestable Containers
+contribution.
+</li>
+
+<li>
+<strong>no shortcuts in verification</strong>
+If a signature can't be checked, the result is "unverified." No "probably."
+No "the cloud provider promised." No "we checked last Tuesday." No
+insecure mode without making it loudly visible.
+</li>
+
+<li>
+<strong>no plumbing before the core proof works end-to-end</strong>
+No token formats, no smart contracts, no compatibility layers until the
+three checks (platform measurement, Value X, pubkey binding) pass on
+hardware. Everything not strictly load-bearing is a follow-up.
+</li>
+
 </ol>
-
-<p class="small">
-That split is actually what you want. KMS is a coarse, global allowlist
-keyed on the boot image. Value X is a fine-grained, project-local policy
-the attested code enforces after unwrapping. Trying to put Value X into the
-KMS condition key would couple your identity to AWS's condition language
-and require a KMS policy update for every rebuild — which defeats the point.
-</p>
-
-<p class="small">
-Platforms other than Nitro need a user-supplied policy gate (Vault plugin,
-OPA sidecar, custom service) because TDX and SNP don't have an equivalent
-of Nitro's NSM-backed KMS recipient flow. That's follow-up work, tracked
-under "bountynet-gate" in DESIGN.md.
-</p>
 
       </div>
     </form>
   </dialog>
 
-  <!-- =============================================== -->
-  <!-- =========== COLLAPSIBLE DEEP DIVES ============= -->
-  <!-- =============================================== -->
+  <!-- =============================================================
+       #enclave-audit — COLLAPSIBLE DEEP DIVES
+       ============================================================= -->
+  <dialog class="cs-dialog" open id="enclave-audit">
+    <form method="dialog" onsubmit="event.preventDefault()">
+      <div class="heading">
+        <div class="wrapper"><div class="icon"></div><span class="text">[ system_specifications_v2 // audit drawer ]</span></div>
+      </div>
+      <div class="content">
 
-  <details class="cs-dialog" id="invariant">
-    <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><span class="text">invariant.md // the three checks</span></div>
-    </summary>
-    <div class="content">
+<p class="small">
+Raw logic and schemas. Collapsed by default — click a section to expand.
+Each section corresponds to a file in the repo (linked at the bottom).
+</p>
+
+<details class="cs-dialog" id="invariant">
+  <summary class="heading">
+    <div class="wrapper"><div class="icon"></div><span class="text">invariant.md // the three checks</span></div>
+  </summary>
+  <div class="content">
 
 <p>
 Everything in this repo exists to solve one problem. It breaks down into
@@ -453,7 +720,7 @@ flowchart TB
     Q[hardware quote<br/>signed by CPU vendor]
     P[1. platform measurement<br/>matches expected value<br/>MRTD / MEASUREMENT / PCR0]
     X[2. Value X<br/>sha384 of runner source<br/>matches expected value]
-    K[3. pubkey in quote<br/>was generated inside the TEE<br/>sha256 tls_spki hash in report_data]
+    K[3. pubkey in quote<br/>generated inside the TEE<br/>sha256 tls_spki in report_data]
     OK[attestation is real]
     Q --> P
     Q --> X
@@ -464,98 +731,42 @@ flowchart TB
 </div>
 
 <p class="small">
-Check #1 proves the boot image is genuine (shim is in the boot image, CPU measured it).
-Check #2 proves the application payload is genuine (Value X computed by the shim, which
-is trusted because of #1). Check #3 proves the attestation was produced by the attested
-environment, not a proxy — this is channel binding.
+Check #1 proves the boot image is genuine (the shim is in the boot image,
+the CPU measured it). Check #2 proves the application payload is genuine
+(Value X computed by the shim, trusted because of #1). Check #3 proves
+the attestation was produced by the attested environment, not a proxy —
+channel binding.
 </p>
 
-    </div>
-  </details>
+  </div>
+</details>
 
-  <details class="cs-dialog" id="flow">
-    <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><span class="text">stage 0 &rarr; stage 1 chain</span></div>
-    </summary>
-    <div class="content">
-
-<p>
-<strong>Attestable Containers</strong> (Cambridge, CCS 2025) defines a
-(PCR, CT, A) binding: the TEE attests that source S compiled into artifact A
-inside environment E. The paper leaves the build-to-runtime chain to the consumer.
-We implement it.
-</p>
-
-<div class="mermaid">
-sequenceDiagram
-    participant Dev as developer
-    participant Git as git repo
-    participant S0 as stage 0 TEE<br/>(bountynet build)
-    participant Disk as disk
-    participant S1 as stage 1 TEE<br/>(bountynet run)
-    participant Cli as verifier<br/>(bountynet check)
-    Dev->>Git: push source
-    Git->>S0: clone inside TEE
-    S0->>S0: CT = sha384(source)
-    S0->>S0: ratchet: freeze source read-only
-    S0->>S0: build + A = sha384(artifact)
-    S0->>S0: ratchet check
-    S0->>S0: Value X = sha384(frozen source)
-    S0->>S0: binding_bytes() from partial EAT
-    S0->>S0: collect quote with binding in report_data
-    S0->>Disk: attestation.cbor
-    Note over S1: boot inside TEE
-    Disk->>S1: load stage 0 EAT
-    S1->>S1: verify stage 0 quote vs vendor root
-    S1->>S1: recompute Value X from disk
-    S1->>S1: set_previous(stage0_cbor)
-    S1->>S1: binding_bytes() includes sha256(stage0_cbor)
-    S1->>S1: collect new quote
-    S1->>Cli: TLS handshake<br/>(attested-TLS cert carries stage 1 EAT)
-    Cli->>Cli: extract EAT from cert extension
-    Cli->>Cli: check tls_spki_hash vs cert SPKI
-    Cli->>Cli: verify stage 1 quote vs vendor root
-    Cli->>Cli: walk previous_attestation
-    Cli->>Cli: verify stage 0 quote vs vendor root
-    Cli->>Cli: assert Value X stable across chain
-    Cli-->>Dev: green / red
-</div>
-
-<p class="small">
-Every link is a hash committed to a hardware-signed report_data. No gaps.
-A tamper at any point changes a hash, which changes a binding, which
-changes report_data, which fails the vendor's signature check.
-</p>
-
-    </div>
-  </details>
-
-  <details class="cs-dialog">
-    <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><span class="text">EAT token schema</span></div>
-    </summary>
-    <div class="content">
+<details class="cs-dialog">
+  <summary class="heading">
+    <div class="wrapper"><div class="icon"></div><span class="text">EAT token schema</span></div>
+  </summary>
+  <div class="content">
 
 <p>
 IETF RATS Entity Attestation Token (<a href="https://datatracker.ietf.org/doc/rfc9711/" target="_blank">RFC 9711</a>),
 profile <code>https://bountynet.dev/eat/v2</code>. CBOR-encoded, embedded
 in an X.509 extension at OID <code>2.23.133.5.4.9</code>
-(TCG DICE Conceptual Message Wrapper), same convention Gramine uses.
+(TCG DICE Conceptual Message Wrapper — same convention Gramine uses).
 </p>
 
-<pre class="code">EatToken {
+<div class="vx-data-block">EatToken {
   version:              u32           // schema version
   eat_profile:          string        // "https://bountynet.dev/eat/v2"
   value_x:              [u8; 48]      // sha384 of runner source — LATTE L2
   platform:             u8            // 1 Nitro / 2 SevSnp / 3 Tdx
   platform_measurement: Vec&lt;u8&gt;       // PCR0 / MEASUREMENT / MRTD
   platform_quote:       Vec&lt;u8&gt;       // raw TEE evidence, opaque leaf
-  tls_spki_hash:        [u8; 32]      // sha256(server TLS SPKI) — channel binding
+  tls_spki_hash:        [u8; 32]      // sha256(TLS SPKI) — channel binding
   source_hash:          [u8; 48]      // CT — Attestable Containers
-  artifact_hash:        [u8; 48]      // A — Attestable Containers
+  artifact_hash:        [u8; 48]      // A  — Attestable Containers
   iat:                  u64           // issued at, unix seconds
   eat_nonce:            [u8; 32]      // freshness
-  previous_attestation: Vec&lt;u8&gt;       // prior stage's CBOR bytes
+  previous_attestation: Vec&lt;u8&gt;       // prior stage CBOR bytes
 }
 
 binding_bytes() = sha256(
@@ -567,71 +778,22 @@ binding_bytes() = sha256(
 previous_hash() = sha256(previous_attestation)   // or zeros for root
 
 // binding_bytes() goes into report_data[0..32] of the TEE quote.
-// The TEE hardware signs report_data. No separate app-level key.
-// LATTE contribution #7: use the platform attestation key, not an app key.</pre>
+// The TEE hardware signs report_data. No separate app-level key.</div>
 
-    </div>
-  </details>
+  </div>
+</details>
 
-  <details class="cs-dialog" id="ouroboros">
-    <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><span class="text">ouroboros.sh // CI builds itself</span></div>
-    </summary>
-    <div class="content">
-
-<p>
-Every push to <code>main</code> that touches <code>v2/</code> triggers
-<code>.github/workflows/attested-self-build.yml</code>, which dispatches
-to our self-hosted GCP TDX runner. The runner checks out the commit,
-runs <code>bountynet build v2/</code> inside the TEE, and uploads a real
-Intel-TDX-signed attestation as a workflow artifact.
-</p>
-
-<div class="mermaid">
-flowchart LR
-    Push[developer push to main]
-    GH[github.com]
-    Dispatch[workflow dispatch]
-    Runner[self-hosted TDX runner<br/>GCP c3-standard-4]
-    Checkout[checkout commit]
-    Build[sudo bountynet build v2/]
-    TDX[TDX module collects quote<br/>signed by Intel]
-    Upload[upload attestation.cbor<br/>as workflow artifact]
-    Verify[verifier downloads,<br/>runs verify_platform_quote]
-    Archive[commit testdata/chain/tdx_ouroboros.cbor<br/>as permanent record]
-    Push --> GH
-    GH --> Dispatch
-    Dispatch --> Runner
-    Runner --> Checkout
-    Checkout --> Build
-    Build --> TDX
-    TDX --> Upload
-    Upload --> Verify
-    Verify --> Archive
-    Archive -.->|next release<br/>chains to this| Build
-</div>
-
-<p class="small">
-The dashed arrow is the ouroboros. Every future release of bountynet is
-provably built by a previous attested build of bountynet. The chain can
-be walked back to the first hardware run. First run:
-commit <code>2593db6</code>, 2026-04-14 12:40 UTC.
-</p>
-
-    </div>
-  </details>
-
-  <details class="cs-dialog">
-    <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><span class="text">trust anchors // three independent vendors</span></div>
-    </summary>
-    <div class="content">
+<details class="cs-dialog">
+  <summary class="heading">
+    <div class="wrapper"><div class="icon"></div><span class="text">trust anchors // three independent vendors</span></div>
+  </summary>
+  <div class="content">
 
 <p>
 Anytrust (Attestable Containers contribution #4): if two independent TEE
-vendors attest the same Value X from the same source, trust at least one &rarr;
-trust the build. Our code verifies against the vendor root CA for each
-platform. The roots are pinned in <code>quote/verify.rs</code>.
+vendors attest the same Value X from the same source, trust at least one
+&rarr; trust the build. Our code verifies against the vendor root CA for
+each platform. The roots are pinned in <code>v2/src/quote/verify.rs</code>.
 </p>
 
 <div class="mermaid">
@@ -651,35 +813,63 @@ flowchart TB
     NitroCA --> Any
 </div>
 
-<p class="small">
-An attacker would need to compromise <em>all three</em> of Intel, AMD,
-and Amazon simultaneously to fake a Value X that verifies on all three
-platforms. No cloud provider is in the trust chain — only the silicon
-vendors.
+  </div>
+</details>
+
+<details class="cs-dialog" id="ouroboros-details">
+  <summary class="heading">
+    <div class="wrapper"><div class="icon"></div><span class="text">ouroboros.sh // CI builds itself</span></div>
+  </summary>
+  <div class="content">
+
+<p>
+Every push to <code>main</code> that touches <code>v2/</code> triggers
+<code>.github/workflows/attested-self-build.yml</code>, which dispatches to
+our self-hosted TDX runner. The runner checks out the commit, runs
+<code>bountynet build v2/</code> inside the TEE, and uploads a real
+Intel-TDX-signed attestation as a workflow artifact. The first run
+(2026-04-14 12:40 UTC, commit <code>2593db6</code>) is archived
+byte-identically at <code>v2/testdata/chain/tdx_ouroboros.cbor</code>.
 </p>
 
-    </div>
-  </details>
+<div class="mermaid">
+flowchart LR
+    Push[developer push]
+    GH[github.com]
+    Runner[self-hosted TDX runner]
+    Build[sudo bountynet build v2/]
+    TDX[TDX module<br/>signs quote]
+    Archive[testdata/chain/tdx_ouroboros.cbor]
+    Push --> GH
+    GH --> Runner
+    Runner --> Build
+    Build --> TDX
+    TDX --> Archive
+    Archive -.->|next release<br/>chains to this| Build
+</div>
 
-  <details class="cs-dialog">
-    <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><span class="text">standards.txt</span></div>
-    </summary>
-    <div class="content">
+  </div>
+</details>
+
+<details class="cs-dialog">
+  <summary class="heading">
+    <div class="wrapper"><div class="icon"></div><span class="text">standards.txt</span></div>
+  </summary>
+  <div class="content">
 
 <table class="cs-table">
 <tr><th>what we build</th><th>derived from</th></tr>
 <tr>
-  <td>Two-layer check (platform + portable identity)</td>
+  <td>two-layer check (platform + portable identity)</td>
   <td>LATTE (Xu et al., SJTU, EuroS&amp;P 2025)</td>
 </tr>
 <tr>
-  <td>Ratchet + build-inside-TEE + (PCR, CT, A) binding</td>
+  <td>ratchet + build-inside-TEE + (PCR, CT, A) binding</td>
   <td>Attestable Containers (Cambridge/JKU, CCS 2025)</td>
 </tr>
 <tr>
-  <td>Build-to-runtime chain (AC contribution #6)</td>
-  <td>Left to consumer; we implement it</td>
+  <td>build-to-runtime chain (AC contribution #6)</td>
+  <td>left to consumer; we implement it</td>
 </tr>
 <tr>
   <td>EAT token format</td>
@@ -690,39 +880,17 @@ vendors.
   <td>TCG DICE Attestation Architecture v1.1 (OID 2.23.133.5.4.9)</td>
 </tr>
 <tr>
-  <td>Bootstrap-once, then cheap signatures</td>
+  <td>bootstrap-once, then cheap signatures</td>
   <td>Flashbots Andromeda / SIRRAH</td>
 </tr>
 </table>
 
-    </div>
-  </details>
+  </div>
+</details>
 
-  <details class="cs-dialog">
-    <summary class="heading">
-      <div class="wrapper"><div class="icon"></div><span class="text">quick_start.sh</span></div>
-    </summary>
-    <div class="content">
-
-<pre class="code">$ git clone https://github.com/maceip/bountynet-genesis
-$ cd bountynet-genesis/v2
-$ cargo build --release
-$ cargo test                    # 65 tests including 7 real-hardware regressions
-
-# inside a TEE — stage 0 build
-$ sudo ./target/release/bountynet build /path/to/source \
-    --cmd "your build cmd" \
-    --output ./attest-out
-
-# inside a TEE — stage 1 runtime, chains to stage 0, serves attested TLS on :443
-$ sudo ./target/release/bountynet run /path/to/source \
-    --attestation ./attest-out/attestation.cbor
-
-# anywhere — verify an attested-TLS endpoint. no TEE required on the verifier.
-$ ./target/release/bountynet check https://&lt;domain&gt;/</pre>
-
-    </div>
-  </details>
+      </div>
+    </form>
+  </dialog>
 
   <!-- ===== FOOTER ===== -->
   <dialog class="cs-dialog" open>
@@ -752,45 +920,39 @@ mermaid.initialize({
   startOnLoad: true,
   theme: 'base',
   themeVariables: {
-    background: '#4c5844',
-    primaryColor: '#8a9a6b',
-    primaryTextColor: '#dbe4c9',
-    primaryBorderColor: '#232b1f',
-    lineColor: '#dbe4c9',
-    secondaryColor: '#6b7c52',
-    tertiaryColor: '#4c5844',
-    nodeBorder: '#232b1f',
-    clusterBkg: '#6b7c52',
-    clusterBorder: '#232b1f',
-    defaultLinkColor: '#dbe4c9',
-    fontSize: '14px',
+    background: '#0b0d08',
+    primaryColor: '#11140d',
+    primaryTextColor: '#f0f1eb',
+    primaryBorderColor: '#2b3022',
+    lineColor: '#a3e635',
+    secondaryColor: '#171c10',
+    tertiaryColor: '#0b0d08',
+    nodeBorder: '#2b3022',
+    clusterBkg: '#171c10',
+    clusterBorder: '#2b3022',
+    defaultLinkColor: '#a3e635',
+    fontSize: '13px',
     fontFamily: '"VT323", "Courier New", monospace'
   },
   flowchart: { curve: 'basis', padding: 20 },
-  sequence: { actorMargin: 30, boxMargin: 10, messageFontSize: 13 }
+  sequence: { actorMargin: 28, boxMargin: 8, messageFontSize: 12 }
 });
 
-// Mermaid gotcha: diagrams inside <details> that start closed render to
-// 0×0 because their containers have no layout. On first open of each
-// details block we re-run mermaid against any mermaid nodes inside it.
-// The nodes swap their original source into a data attribute once rendered,
-// so we have to restore + re-run them.
+// Mermaid-in-details fix: closed <details> measure to 0x0, so mermaid
+// skips them during startOnLoad. On first open of each details block,
+// re-run mermaid against any unrendered nodes inside it.
 document.querySelectorAll('details.cs-dialog').forEach(function(d) {
   d.addEventListener('toggle', function() {
     if (!d.open) return;
     var unrendered = d.querySelectorAll('.mermaid:not([data-processed="true"])');
     if (unrendered.length) {
-      // First open: mermaid may have skipped these during startOnLoad
-      // because they were measured as zero-height. Run now.
       mermaid.run({ nodes: unrendered });
     }
-  }, { once: false });
+  });
 });
 </script>
 <script>
-// Copy-to-clipboard for .vx-copy buttons. Uses navigator.clipboard when
-// available (all modern browsers over HTTPS), falls back to a temporary
-// textarea + document.execCommand('copy') for ancient environments.
+// Copy-to-clipboard for .vx-copy buttons.
 document.addEventListener('click', function(ev) {
   var btn = ev.target.closest('.vx-copy');
   if (!btn) return;
@@ -810,7 +972,6 @@ document.addEventListener('click', function(ev) {
   };
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(done, function() {
-      // fallback
       var ta = document.createElement('textarea');
       ta.value = text;
       document.body.appendChild(ta);
@@ -828,21 +989,18 @@ document.addEventListener('click', function(ev) {
   }
 });
 
-// Populate the background watermark with Value X hex strings. We generate
-// enough repeats to fill the viewport height regardless of screen size.
-// The strings are rendered as rows of faint monospace characters, each
-// row a complete Value X, tiled both horizontally and vertically.
+// Populate the background watermark with Value X hex strings.
 (function populateWatermark() {
   var wm = document.querySelector('.vx-watermark');
   if (!wm) return;
   var lineage = [
     '58b663bbb60a906f29a2e5141c67a4a163271a9af24304e282bdbbbb8fb94fa5bc337dda323d37e7f78f429bcf80810c',
-    'f44f87e6f0965493ac6822dd89b155cb82758d6898751196f7892d12684fc49594fa3a8d7dc548d8496fe17597a32c20',
+    'f44f87e6f0965493ac6822dd89b155cb82758d6898751196f7892d12684fc49594fa3a8d7dc548d8496fe17597a32c20'
   ];
   var rows = [];
   var target = Math.ceil(window.innerHeight / 14) + 40;
   for (var i = 0; i < target; i++) {
-    rows.push(lineage[i % lineage.length] + ' ' + lineage[i % lineage.length]);
+    rows.push(lineage[i % lineage.length] + '  ' + lineage[i % lineage.length]);
   }
   wm.textContent = rows.join('\n');
 })();
