@@ -278,3 +278,23 @@ the payload, and document that the flow itself is industry convention.
     `cmd_enclave` into a standalone module with a business-card API.
 11. Stage 0 output migration: stage 0 produces a CMW-wrapped EAT too, so
     the wire format is uniform end-to-end.
+12. DCAP collateral layer: QE Identity + TCB Info + CRL + `nextUpdate`
+    freshness. Matches Intel attestation service quality. AMD KDS VCEK
+    fetch is already done; the missing pieces are collateral policy
+    checks inside `verify_platform_quote`.
+13. Runtime TOCTOU fields in EAT: wire `heartbeat_seq` (monotonic
+    counter, gaps are suspicious) and `integrity_ok` (runtime integrity
+    monitor status) into the claim set in `src/eat.rs`.
+14. Shadow attestation service (`SHADOW.md`): public `/shadow-build`
+    endpoint (v1 accessed via a GitHub Action shim,
+    `maceip/bountynet-shadow@v1`) where a build bundle is submitted,
+    an isolated ephemeral TDX VM rebuilds it, and a
+    `bountynet-shadow-v1` EAT is returned. Isolation = separate VM per
+    request in dedicated GCP project `bountynet-shadow-20260415`,
+    isolated VPC, zero network on build VMs. Rails = daily spend cap
+    ($100), wall-clock ceiling (15 min default / 60 min hard cap), no
+    egress, PoW admission, submission dedup. GitHub OIDC + SBOM
+    attestation verification gates the Action-mediated path; raw PoW
+    gates the eventual public API. See `SHADOW.md` for the full threat
+    model + rail design. Do NOT co-locate with the current live
+    runner. Code lives in `maceip/bountynet-shadow` (separate repo).

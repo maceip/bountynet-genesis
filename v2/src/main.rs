@@ -35,6 +35,9 @@ mod net;
 mod quote;
 mod registry;
 mod tee;
+mod value_x;
+
+use value_x::compute_tree_hash;
 
 use sha2::{Digest, Sha256, Sha384};
 use std::path::{Path, PathBuf};
@@ -1872,58 +1875,6 @@ fn cmd_merge(args: &[String]) -> anyhow::Result<()> {
 // ============================================================================
 // Helpers
 // ============================================================================
-
-/// Compute sha384 over all files in a directory, sorted by path.
-/// This is used for both CT (source hash) and Value X (output hash).
-fn compute_tree_hash(dir: &Path) -> anyhow::Result<[u8; 48]> {
-    let mut entries: Vec<(String, [u8; 48])> = Vec::new();
-    collect_hashes(dir, dir, &mut entries)?;
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let mut hasher = Sha384::new();
-    for (path, hash) in &entries {
-        hasher.update(path.as_bytes());
-        hasher.update(b":");
-        hasher.update(hash);
-        hasher.update(b"\n");
-    }
-    Ok(hasher.finalize().into())
-}
-
-fn collect_hashes(
-    base: &Path,
-    dir: &Path,
-    out: &mut Vec<(String, [u8; 48])>,
-) -> anyhow::Result<()> {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-
-    for entry in entries {
-        let path = entry.path();
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-        // Skip git, build artifacts, and IDE files
-        if matches!(name, ".git" | "target" | "node_modules" | ".DS_Store" | "out") {
-            continue;
-        }
-
-        if path.is_dir() {
-            collect_hashes(base, &path, out)?;
-        } else if path.is_file() {
-            let bytes = std::fs::read(&path)?;
-            let hash: [u8; 48] = Sha384::digest(&bytes).into();
-            let rel = path
-                .strip_prefix(base)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
-            out.push((rel, hash));
-        }
-    }
-    Ok(())
-}
 
 /// Detect build command from project files.
 fn detect_build_cmd(dir: &Path) -> String {
