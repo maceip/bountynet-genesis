@@ -48,7 +48,7 @@ can verify the proof without trusting the operator.
 |----------|----------|-----|----------------------|----------------------|--------|
 | AWS Nitro | Amazon | Nitro Enclave | .eif reproducible from source (verified: two builds → same PCR0) | Yes — PCR0 covers everything | **Proven** — production KMS ceremony, ACME TLS, remote verify |
 | GCP TDX | Google | Intel TDX | Google signed endorsement (MRTD). RTMR[1-3] cover our code, verifiable from source. | RTMR[1-2] cover kernel | **Proven** — attestation collected, TLS serving |
-| Azure SNP | Microsoft | AMD SEV-SNP | Custom OVMF via IGVM, reproducible from source | Full control — MEASUREMENT covers everything | **Next** |
+| Azure SNP | Microsoft | AMD SEV-SNP via vTOM/paravisor | Azure Confidential VM launch stack; raw guest report device not exposed on tested DCasv5 VM | Not available to current raw SNP collector (`/dev/sev-guest` absent; configfs-tsm report create fails) | **Tested / not verified** — Azure VM created 2026-05-01, needs MAA/vTOM collector or raw SNP/TDX SKU |
 | Azure TDX | Microsoft | Intel TDX | Custom firmware, reproducible from source | Full control | **Next** |
 | AWS SNP | Amazon | AMD SEV-SNP | Published source does not match production firmware ([aws/uefi#19](https://github.com/aws/uefi/issues/19)). Kernel measurement via NitroTPM (see below). | Kernel via NitroTPM, not SNP MEASUREMENT | **Proven** — attestation collected, TLS serving |
 | Equinix Metal | Equinix | AMD SEV-SNP (bare metal) | Full BIOS control via IPMI. Run your own hypervisor + OVMF. | Full control | Not tested |
@@ -112,11 +112,12 @@ PCR hash successfully bound into SNP REPORT_DATA.
 | AWS Nitro | Amazon (NSM chip) | None | — |
 | AWS SNP | AMD (PSP) | AWS | NitroTPM kernel measurement |
 | GCP TDX | Intel (TDX Module) | Google | Firmware endorsement (MRTD) |
-| Azure SNP/TDX | AMD/Intel | None | — (custom OVMF via IGVM) |
+| Azure SNP (tested DCasv5 path) | AMD (PSP) | Microsoft | vTOM/paravisor + MAA/vTPM evidence path; raw SNP report device not exposed |
+| Azure SNP/TDX (custom IGVM target) | AMD/Intel | None | Future target if custom firmware + raw quote path are available |
 
-AWS Nitro and Azure require no cloud provider trust. AWS SNP and GCP
-TDX require trusting the provider for one component. This is documented,
-not hidden.
+AWS Nitro requires no cloud provider trust beyond the Nitro root itself.
+AWS SNP, GCP TDX, and the tested Azure CVM path require trusting the
+provider for one component. This is documented, not hidden.
 
 ## Stage 1: The Attested Runtime
 
@@ -136,7 +137,8 @@ The runtime platform provides the execution trust.
 | Stage 1 platform | Firmware verification | Our code verification |
 |------------------|----------------------|----------------------|
 | GCP TDX | Google endorsement (MRTD) | RTMR[1-3] from source |
-| Azure SNP | Our OVMF via IGVM (MEASUREMENT from source) | Included in MEASUREMENT |
+| Azure SNP (tested DCasv5 path) | Azure vTOM/paravisor + vTPM/MAA path; not supported by current raw collector | Not yet verified by bountynet |
+| Azure SNP (custom IGVM target) | Our OVMF via IGVM (MEASUREMENT from source) | Included in MEASUREMENT |
 | Azure TDX | Our OVMF (MRTD from source) | RTMR[1-3] from source |
 | AWS SNP | SNP MEASUREMENT (firmware) + NitroTPM (kernel) | PCRs via NitroTPM, linked to SNP report |
 | AWS Nitro | .eif reproducible | PCR0 covers everything |
@@ -152,3 +154,4 @@ End-to-end on real hardware, not simulated:
 - **KMS upgrade ceremony**: NodeA (PCR0 A) gets secret, NodeA' (PCR0 B) denied — hardware identity enforced
 - **GitHub Action**: `maceip/bountynet-genesis/v2/action` tested on real workflow, correctly refuses on non-TEE runners
 - **One-command verify**: `bountynet verify --remote https://<value_x>.aeon.site` from any machine
+- **Azure result (2026-05-01)**: `Standard_DC4as_v5` CVM provisions and boots with AMD SEV memory encryption, but `/dev/sev-guest` is absent and configfs-tsm report creation fails. Azure is tested, not verified, until an Azure MAA/vTOM provider or raw quote SKU exists.

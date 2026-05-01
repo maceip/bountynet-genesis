@@ -12,8 +12,8 @@ use sha2::{Digest, Sha256};
 
 /// Verify a raw platform quote: signature chain + report_data binding.
 ///
-/// `expected_binding` is the sha256(CT || A || X) that was committed
-/// to report_data[0..32] at build time.
+/// `expected_binding` is the EAT `binding_bytes()` value committed to
+/// report_data[0..32] by the producer before quote collection.
 ///
 /// Returns Ok(measurements) if the quote is genuine and binds to the expected data.
 pub fn verify_platform_quote(
@@ -24,17 +24,32 @@ pub fn verify_platform_quote(
     match platform {
         #[cfg(feature = "nitro")]
         Platform::Nitro => {
-            let (_valid, measurements) = verify_nitro_quote(raw_quote, expected_binding)?;
+            let (valid, measurements) = verify_nitro_quote(raw_quote, expected_binding)?;
+            if !valid {
+                return Err(VerifyError::PlatformError(
+                    "Nitro: platform signature chain did not verify".into(),
+                ));
+            }
             Ok(measurements)
         }
         #[cfg(feature = "sev-snp")]
         Platform::SevSnp => {
-            let (_valid, measurements) = verify_snp_quote_raw(raw_quote, expected_binding)?;
+            let (valid, measurements) = verify_snp_quote_raw(raw_quote, expected_binding)?;
+            if !valid {
+                return Err(VerifyError::PlatformError(
+                    "SNP: platform signature chain did not verify".into(),
+                ));
+            }
             Ok(measurements)
         }
         #[cfg(feature = "tdx")]
         Platform::Tdx => {
-            let (_valid, measurements) = verify_tdx_quote_raw(raw_quote, expected_binding)?;
+            let (valid, measurements) = verify_tdx_quote_raw(raw_quote, expected_binding)?;
+            if !valid {
+                return Err(VerifyError::PlatformError(
+                    "TDX: platform signature chain did not verify".into(),
+                ));
+            }
             Ok(measurements)
         }
         #[allow(unreachable_patterns)]
@@ -412,8 +427,7 @@ fn verify_cert_chain_p384_nitro(
 #[cfg(feature = "sev-snp")]
 fn verify_snp_quote(
     raw_quote: &[u8],
-    expected_pubkey: &[u8; 32],
-    expected_value_x: &[u8; 48],
+    expected_binding: &[u8; 32],
 ) -> Result<(bool, Vec<(String, Vec<u8>)>), VerifyError> {
     use p384::ecdsa::{self, signature::hazmat::PrehashVerifier};
     use sha2::Sha384;
@@ -443,26 +457,17 @@ fn verify_snp_quote(
     // Extract REPORT_DATA (64 bytes at offset 0x050)
     let report_data = &raw_quote[0x050..0x090];
 
-    // Verify binding: REPORT_DATA[0..32] == sha256(pubkey || value_x)
-    let mut binding = Vec::with_capacity(32 + 48);
-    binding.extend_from_slice(expected_pubkey);
-    binding.extend_from_slice(expected_value_x);
-    let expected_binding: [u8; 32] = Sha256::digest(&binding).into();
-
     if report_data[..32] != expected_binding[..] {
-        // Fallback: check legacy format sha256(pubkey) for backward compat
-        let legacy_hash: [u8; 32] = Sha256::digest(expected_pubkey).into();
-        if report_data[..32] != legacy_hash[..] {
-            return Err(VerifyError::PlatformError(
-                "SNP: REPORT_DATA[0..32] does not match sha256(pubkey||value_x) binding".into(),
-            ));
-        }
+        return Err(VerifyError::PlatformError(
+            "SNP: REPORT_DATA[0..32] does not match EAT binding".into(),
+        ));
     }
 
     let host_data = raw_quote[0x0C0..0x0E0].to_vec();
 
     // --- ECDSA-P384 signature verification ---
     let mut sig_verified = false;
+    let mut chain_verified = false;
     {
         let signed_data = &raw_quote[0x000..0x2A0];
 
@@ -547,6 +552,7 @@ fn verify_snp_quote(
                 }
                 verify_cert_chain_p384(ark, ask)?; // ARK signed ASK
                 verify_cert_chain_p384(ask, vcek)?; // ASK signed VCEK
+                chain_verified = true;
             }
         }
         // If no VCEK available (KDS also failed), sig_verified stays false
@@ -560,6 +566,10 @@ fn verify_snp_quote(
             "SIG_VERIFIED".to_string(),
             vec![if sig_verified { 1 } else { 0 }],
         ),
+        (
+            "CHAIN_VERIFIED".to_string(),
+            vec![if chain_verified { 1 } else { 0 }],
+        ),
     ];
 
     if raw_quote.len() > 0x4A0 || raw_quote.len() > 0x480 {
@@ -567,10 +577,10 @@ fn verify_snp_quote(
     }
 
     // platform_valid reflects actual crypto verification status.
-    // If VCEK certs weren't available, sig_verified=false and the caller
-    // sees platform_valid=false + SIG_VERIFIED=0 in measurements.
+    // If VCEK or its AMD root chain are unavailable, the caller sees
+    // platform_valid=false plus SIG_VERIFIED/CHAIN_VERIFIED=0.
     // Pubkey binding was already checked above (would have returned Err).
-    Ok((sig_verified, measurements))
+    Ok((sig_verified && chain_verified, measurements))
 }
 
 /// Parse the SNP_GET_EXT_REPORT certificate table.
@@ -663,8 +673,7 @@ fn parse_snp_cert_table(
 #[cfg(feature = "tdx")]
 fn verify_tdx_quote(
     raw_quote: &[u8],
-    expected_pubkey: &[u8; 32],
-    expected_value_x: &[u8; 48],
+    expected_binding: &[u8; 32],
 ) -> Result<(bool, Vec<(String, Vec<u8>)>), VerifyError> {
     use p256::ecdsa::{self, signature::hazmat::PrehashVerifier};
 
@@ -702,20 +711,10 @@ fn verify_tdx_quote(
     let rtmr3 = body[472..520].to_vec();
     let report_data = &body[520..584];
 
-    // Verify binding: REPORTDATA[0..32] == sha256(pubkey || value_x)
-    let mut binding = Vec::with_capacity(32 + 48);
-    binding.extend_from_slice(expected_pubkey);
-    binding.extend_from_slice(expected_value_x);
-    let expected_binding: [u8; 32] = Sha256::digest(&binding).into();
-
     if report_data[..32] != expected_binding[..] {
-        // Fallback: check legacy format sha256(pubkey) for backward compat
-        let legacy_hash: [u8; 32] = Sha256::digest(expected_pubkey).into();
-        if report_data[..32] != legacy_hash[..] {
-            return Err(VerifyError::PlatformError(
-                "TDX: REPORTDATA[0..32] does not match sha256(pubkey||value_x) binding".into(),
-            ));
-        }
+        return Err(VerifyError::PlatformError(
+            "TDX: REPORTDATA[0..32] does not match EAT binding".into(),
+        ));
     }
 
     // --- Parse signature section ---
@@ -906,7 +905,7 @@ fn verify_tdx_quote(
         ),
     ];
 
-    Ok((quote_sig_valid && qe_verified, measurements))
+    Ok((quote_sig_valid && qe_verified && chain_verified, measurements))
 }
 
 /// Parse a PEM certificate chain string into a Vec of DER byte vectors.
@@ -929,9 +928,10 @@ fn parse_pem_chain(pem_str: &str) -> Vec<Vec<u8>> {
 }
 
 // ============================================================================
-// Raw binding verification wrappers (for stage 0 verify flow)
-// These check report_data[0..32] against a binding hash directly,
-// without needing pubkey + value_x separately.
+// EAT binding verification wrappers.
+// These pass the already-computed EAT binding into the full platform
+// verifier instead of reconstructing legacy sha256(pubkey || value_x)
+// bindings.
 // ============================================================================
 
 #[cfg(feature = "sev-snp")]
@@ -939,24 +939,7 @@ fn verify_snp_quote_raw(
     raw_quote: &[u8],
     expected_binding: &[u8; 32],
 ) -> Result<(bool, Vec<(String, Vec<u8>)>), VerifyError> {
-    if raw_quote.len() < 0x318 {
-        return Err(VerifyError::PlatformError(format!(
-            "SNP report too short: {} bytes", raw_quote.len()
-        )));
-    }
-    let report_data = &raw_quote[0x050..0x090];
-    if report_data[..32] != expected_binding[..] {
-        return Err(VerifyError::PlatformError(
-            "SNP: report_data binding mismatch".into(),
-        ));
-    }
-    let measurement = raw_quote[0x090..0x0C0].to_vec();
-    let measurements = vec![
-        ("MEASUREMENT".to_string(), measurement),
-        ("REPORT_DATA".to_string(), report_data.to_vec()),
-    ];
-    // Signature verification same as full path — reuse when VCEK available
-    Ok((true, measurements))
+    verify_snp_quote(raw_quote, expected_binding)
 }
 
 #[cfg(feature = "tdx")]
@@ -964,24 +947,7 @@ fn verify_tdx_quote_raw(
     raw_quote: &[u8],
     expected_binding: &[u8; 32],
 ) -> Result<(bool, Vec<(String, Vec<u8>)>), VerifyError> {
-    if raw_quote.len() < 632 {
-        return Err(VerifyError::PlatformError(format!(
-            "TDX quote too short: {} bytes", raw_quote.len()
-        )));
-    }
-    let body = &raw_quote[48..632];
-    let report_data = &body[520..584];
-    if report_data[..32] != expected_binding[..] {
-        return Err(VerifyError::PlatformError(
-            "TDX: reportdata binding mismatch".into(),
-        ));
-    }
-    let mrtd = body[136..184].to_vec();
-    let measurements = vec![
-        ("MRTD".to_string(), mrtd),
-        ("REPORTDATA".to_string(), report_data.to_vec()),
-    ];
-    Ok((true, measurements))
+    verify_tdx_quote(raw_quote, expected_binding)
 }
 
 #[derive(Debug, thiserror::Error)]

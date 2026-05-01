@@ -79,7 +79,7 @@ Every other failure would have been caught by the test suite.
 
 ## Platforms to test
 
-The code has to work on all three; a single-platform pass is not
+The code has to work on all core TEE paths; a single-platform pass is not
 sufficient. Priority order by cost to spin up:
 
 1. **GCP TDX (`c3-standard-4` with `confidential-instance-type=TDX`)** —
@@ -92,6 +92,13 @@ sufficient. Priority order by cost to spin up:
    vsock bridge). Validates the most platform-specific code
    (CBOR report_data extraction, NSM re-init) — by far the
    most likely to surface a real bug.
+4. **Azure SEV-SNP (`Standard_DC4as_v5` Confidential VM)** —
+   tested on 2026-05-01. The VM provisions and boots with AMD SEV memory
+   encryption, but Azure's vTOM/paravisor path does not expose
+   `/dev/sev-guest`; configfs-tsm report creation fails with
+   `No such device or address`. This is not counted as proven until we
+   add an Azure MAA/vTOM evidence collector or get access to a raw
+   SNP/TDX attestation SKU.
 
 ## Prep — build the release binary
 
@@ -196,6 +203,58 @@ Inside the VM: `/dev/sev-guest` must exist, then the same
 `bountynet build → bountynet run → bountynet check` sequence. Expected
 output is the same except `Platform: Some(SevSnp)` and the measurements
 section shows `MEASUREMENT:` instead of `MRTD`.
+
+## Runbook — Azure SEV-SNP
+
+Azure provisioning uses the Azure CLI. The local CLI must be authenticated
+first (`az login`) and the subscription must have confidential VM quota in
+the selected region.
+
+```bash
+# 1. Spin up an Azure Confidential VM
+./deploy/azure-cvm.sh
+
+# Equivalent core az command used by the script:
+az vm create \
+  --resource-group bountynet-tee-validation \
+  --location northeurope \
+  --name bountynet-azure-snp \
+  --size Standard_DC4as_v5 \
+  --admin-username azureuser \
+  --image "Canonical:0001-com-ubuntu-confidential-vm-jammy:22_04-lts-cvm:latest" \
+  --security-type ConfidentialVM \
+  --os-disk-security-encryption-type VMGuestStateOnly \
+  --enable-vtpm true \
+  --enable-secure-boot true \
+  --public-ip-sku Standard \
+  --generate-ssh-keys
+```
+
+Inside the VM, confirm one of the SNP evidence paths exists:
+
+```bash
+ls /dev/sev-guest /sys/kernel/config/tsm/report 2>&1
+```
+
+On the 2026-05-01 `Standard_DC4as_v5` test this failed:
+
+```text
+ls: cannot access '/dev/sev-guest': No such file or directory
+mkdir /sys/kernel/config/tsm/report/bountynet-probe: No such device or address
+```
+
+The kernel did report encrypted execution:
+
+```text
+Memory Encryption Features active: AMD SEV
+```
+
+That proves Azure CVM provisioning, but not bountynet's stage chain.
+Azure can be added to the proven platform set only after `cmd_build`
+can collect an evidence object that binds `EatToken::binding_bytes()`,
+`cmd_check` prints `Chain: PASS (1 stage(s) walked)`, and the captured
+`azure_snp_stage0.cbor` / `azure_snp_stage1.cbor` are committed as
+hardware regression fixtures.
 
 ## Runbook — Nitro
 

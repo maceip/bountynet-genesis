@@ -17,18 +17,28 @@ can argue with.
 
 ---
 
-## Proven on real silicon (2026-04-14)
+## Hardware Results
 
 | Platform | Hardware | Root of trust | Chain | Status |
 |---|---|---|---|---|
 | **Intel TDX** | GCP c3-standard-4 | Intel SGX Root CA | stage 0 → stage 1 | ✅ Proven |
 | **AMD SEV-SNP** | AWS c6a.xlarge | AMD Root Key (ARK) | stage 0 → stage 1 | ✅ Proven |
 | **AWS Nitro** | AWS m5.xlarge enclave | AWS Nitro Root CA | stage 0 (single-process) | ✅ Proven |
+| **Azure SEV-SNP** | Azure Standard_DC4as_v5 CVM | AMD PSP + Azure vTOM/paravisor | blocked before stage 0 | Tested, not verified |
 
-Real attestation bytes captured from each platform live in
+Real attestation bytes captured from each proven platform live in
 [`v2/testdata/chain/`](v2/testdata/chain). Every commit runs them through
 the signature verifier as a regression gate.
 [`v2/tests/hardware_regression.rs`](v2/tests/hardware_regression.rs).
+
+Azure was tested on 2026-05-01. The VM provisioned successfully in
+`northeurope`, booted with `Memory Encryption Features active: AMD SEV`,
+and produced a Linux release build. It did **not** expose the raw SNP
+interfaces bountynet needs today: `/dev/sev-guest` was absent and
+configfs-tsm report creation failed with `No such device or address`.
+That means Azure is recorded as tested but not yet verified; support
+needs an Azure MAA/vTOM evidence collector or a SKU/image that exposes
+fresh raw SNP/TDX quote collection.
 
 ## The ouroboros
 
@@ -214,7 +224,10 @@ v2/
   older workflows in this repo are v1 (the original `bountynet-shim`
   crate, pre-chain). v1 still builds and runs; v2 is where the chain
   work lives.
-- All three TEE platforms proven on live hardware.
+- Three TEE paths are proven on live hardware: GCP TDX, AWS SEV-SNP,
+  and AWS Nitro. Azure SEV-SNP has been provisioned and tested, but is
+  not verified until bountynet can bind EAT `report_data` through
+  Azure's vTPM/MAA path or a raw quote interface.
 - GitHub Actions self-hosted TDX runner registered and idle, ready for
   the next push.
 - 65 tests passing on release.
