@@ -18,8 +18,8 @@
   <text x="94" y="110" text-anchor="middle" fill="#0f180d" font-family="Consolas, monospace" font-size="46" font-weight="700">RC</text>
   <text x="180" y="76" fill="#f5f2e8" font-family="Consolas, monospace" font-size="34" font-weight="700">Runcard</text>
   <text x="180" y="116" fill="#d5ddcf" font-family="Consolas, monospace" font-size="24">verified runtime</text>
-  <rect x="180" y="144" width="278" height="42" rx="0" fill="#8ee66f"/>
-  <text x="319" y="172" text-anchor="middle" fill="#0f180d" font-family="Consolas, monospace" font-size="20" font-weight="700">proof before privilege</text>
+  <rect x="180" y="148" width="252" height="34" rx="0" fill="#8ee66f"/>
+  <text x="306" y="172" text-anchor="middle" fill="#0f180d" font-family="Consolas, monospace" font-size="20" font-weight="700">proof before privilege</text>
   <path d="M520 68h164M520 104h164M520 140h164M520 176h92" stroke="url(#accent)" stroke-width="8" stroke-linecap="square"/>
   <text x="684" y="204" text-anchor="end" fill="#91a18c" font-family="Consolas, monospace" font-size="16">source + policy + runtime receipt</text>
 </svg>
