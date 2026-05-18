@@ -7,6 +7,14 @@ jobs:
   attest-test:
     runs-on: [self-hosted, bountynet, tdx]
     steps:
+      - name: Repair runner workspace ownership
+        run: |
+          set -euo pipefail
+          WORK_ROOT="${RUNNER_WORKSPACE:-$(dirname "${GITHUB_WORKSPACE}")}"
+          echo "Repairing ownership under ${WORK_ROOT}"
+          sudo mkdir -p "${GITHUB_WORKSPACE}"
+          sudo chown -R "$(id -u):$(id -g)" "${WORK_ROOT}" "${GITHUB_WORKSPACE}"
+
       - name: Checkout
         uses: actions/checkout@v4
 
